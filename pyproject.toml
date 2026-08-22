@@ -1,0 +1,13 @@
+[project]
+name = "ai-requirements-quality-assistant"
+version = "0.1.0"
+description = "Database layer for the AI Requirements Quality Assistant portfolio project"
+requires-python = ">=3.10"
+dependencies = [
+    "sqlalchemy>=2.0,<3.0",
+    "alembic>=1.13,<2.0",
+    "pytest>=8.0,<9.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
