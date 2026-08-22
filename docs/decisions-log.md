@@ -394,3 +394,83 @@ production BA tooling. This is accepted and documented in
 
 **Impact:** Bounds every subsequent design decision; documented in
 `requirements.md` and `limitations.md`.
+
+---
+
+## 2026-08-22 — Editing is restricted to pending requirements; no reopening workflow
+
+### The decision
+
+`PATCH /requirements/{id}` only succeeds when `review_status='pending'`.
+Editing an already-approved or already-rejected requirement returns
+409 Conflict; there is no endpoint or code path that moves a
+requirement from `approved`/`rejected` back to `pending`.
+
+### Why
+
+Approval and rejection are meant to be human decisions with real
+weight — once an analyst has signed off on a requirement, silently
+allowing further edits underneath that decision would let the
+approved/rejected state drift away from what the analyst actually
+reviewed, without ever being re-reviewed. Blocking edits on decided
+requirements keeps "approved" and "rejected" meaning what they say:
+a decision was made on a specific, frozen piece of text.
+
+### What I rejected, and why it lost
+
+A reopening workflow (edit an approved/rejected requirement, which
+resets it to `pending` for re-review) was considered, since it's a
+realistic real-world need. It lost for this milestone because it's a
+second lifecycle transition the governing documents never define —
+inventing its rules (does it require a reason? does it notify anyone?
+can a rejected item be reopened the same way as an approved one?)
+would be a new product decision, not an implementation detail, and
+this milestone's scope was explicitly the linear pending → decided
+path.
+
+### What I'd do differently at production scale
+
+A real system would need a deliberate reopen action — likely its own
+endpoint, its own audit trail entry (who reopened it and why), and
+probably a policy on whether a previously-approved item needs a fresh
+approval or just re-review. That's meaningfully more product design
+than "allow editing again," which is exactly why it's deferred rather
+than quietly bolted on here.
+
+---
+
+## 2026-08-22 — One composite review endpoint instead of multiple client requests
+
+### The decision
+
+Added `GET /requirements/{id}/review`, which aggregates the
+requirement, its originating extracted evidence, its latest validation
+results, and its full edit history into a single response, rather than
+requiring a future UI to call four separate existing endpoints.
+
+### Why
+
+A human review screen needs all four pieces of information at once —
+showing a requirement without its evidence and validation results
+isn't a usable review screen. A single endpoint matches how the data
+is actually consumed, avoids N+1 round-trips from a future frontend,
+and does so purely by composing existing read-only queries — no new
+table, no duplicated data, no new domain logic.
+
+### What I rejected, and why it lost
+
+Relying on the three already-existing endpoints
+(`GET /requirements/{id}`, `GET /requirements/{id}/validation-results`,
+plus a lookup on `extracted-requirements`) was the alternative. It
+lost because it pushes composition work onto every future client
+instead of once in the API, and because the edit-history piece had no
+existing endpoint at all — it would have needed to be added anyway,
+just without the other three joined onto it.
+
+### What I'd do differently at production scale
+
+At larger scale, this is where a lightweight query/read-model layer
+or GraphQL-style field selection would start to earn its keep, so
+screens with different data needs don't each need a bespoke aggregate
+endpoint. For a single review screen in a portfolio-scale project,
+that would be complexity without a corresponding benefit.

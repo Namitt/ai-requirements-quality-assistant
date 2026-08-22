@@ -83,3 +83,46 @@ class ValidationRunOut(BaseModel):
 class ValidationTriggerResponse(BaseModel):
     requirement: RequirementOut
     validation_run: ValidationRunOut
+
+
+class RequirementPatchRequest(BaseModel):
+    current_text: str = Field(
+        min_length=1, description="The analyst's edited requirement text."
+    )
+
+
+class ApproveRequest(BaseModel):
+    acknowledge_warning: bool = Field(
+        default=False,
+        description=(
+            "Must be explicitly true to approve a requirement whose latest "
+            "validation_state is 'warn'. Never inferred from calling this "
+            "endpoint."
+        ),
+    )
+
+
+class RequirementEditOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    previous_text: str
+    new_text: str
+    edited_by: str | None
+    edited_at: datetime
+
+
+class ExtractedEvidenceOut(BaseModel):
+    id: int
+    requirement_text: str
+    source_quote: str
+    source_span_start: int
+    source_span_end: int
+    source_document_id: int
+
+
+class RequirementReviewResponse(BaseModel):
+    requirement: RequirementOut
+    extracted_evidence: ExtractedEvidenceOut | None
+    latest_validation: ValidationRunOut | None
+    edit_history: list[RequirementEditOut]
