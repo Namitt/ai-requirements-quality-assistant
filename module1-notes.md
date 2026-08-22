@@ -1,8 +1,8 @@
 # Module 1 Notes — AI Requirements Analyst
 
 Interview-preparation notes for Module 1 of the AI Requirements &
-Traceability Workbench. Covers everything built through Milestone 4
-(human review workflow).
+Traceability Workbench. Covers everything built through Milestone 5
+(Streamlit UI).
 
 ## What Module 1 does
 
@@ -82,6 +82,106 @@ blocked, approval never creates a new validation run), rejection
 (requirement, evidence, validation results, and edit history all
 returned together, with the raw AI response never exposed). All 142
 pre-existing tests continue to pass unchanged — 176 total, 0 failures.
+
+## The Streamlit UI (Milestone 5)
+
+A single-page Streamlit app (`app/ui/streamlit_app.py`) turns the
+Module 1 API into something a non-technical analyst can actually use:
+paste text → click Extract → see each requirement's AI draft, source
+evidence, and validation results → edit/approve/reject inline.
+
+## How it communicates with FastAPI
+
+Streamlit never talks to the database, the extraction engine, or
+Anthropic directly. Every action goes through a small API client
+(`app/ui/api_client.py`) that makes plain HTTP calls to the existing
+FastAPI endpoints — the same ones already covered by 176 backend
+tests. The chain is always `Streamlit → FastAPI → extraction/validation
+engines → database`. The API base URL comes from an `API_BASE_URL`
+environment variable (defaulting to `http://127.0.0.1:8000` for local
+development) — never hardcoded, and the Anthropic key never leaves the
+server side.
+
+## Why Streamlit
+
+It's a pure-Python UI library that renders the workflow directly from
+the existing Pydantic response shapes, with no separate frontend
+build, no JavaScript, and no new state-management framework — a good
+fit for a project whose point is the backend workflow, not the UI
+technology. A React/Vite frontend (the option originally named in
+`architecture.md`) was considered and rejected for this milestone
+specifically because it would have meant weeks of unrelated frontend
+engineering to demonstrate the same backend story — see the
+decisions-log entry for the full reasoning.
+
+## Why the API remains the source of truth
+
+The UI never calculates a validation state, an approval rule, or an
+edit history — it only displays what the API returns and re-fetches
+after every action (`GET /requirements/{id}/review`). Streamlit's
+`session_state` is used only to remember *which* extraction run and
+*which* requirement's edit box is open — never a cached copy of
+requirement data. This means the UI can never drift out of sync with
+the database, and it can never accidentally become a second place
+where approval or validation rules are decided.
+
+## What the user sees during extraction
+
+Two distinct, sequential steps, deliberately not merged into one:
+first a spinner reading "AI extraction in progress," then — only once
+extraction succeeds — a second, separately labelled spinner reading
+"Running deterministic validation... independent, fixed rule checks,
+not the AI." Every requirement card repeats this separation visually,
+with its own "🤖 AI-drafted requirement" block followed by its own
+"🔎 Deterministic validation — checked independently of the AI" block.
+
+## How validation is presented
+
+Each of the five rule results is shown individually (rule code,
+PASS/WARN/FAIL, the plain-language message, and the recommended action
+where there is one) — never just a single pass/fail badge with no
+explanation.
+
+## How edit/re-validation works
+
+Editing opens an inline text box seeded with the current text. Saving
+calls `PATCH /requirements/{id}`, which the backend re-validates
+automatically; the UI then re-fetches the requirement so the analyst
+immediately sees the new validation state — it never assumes an edit
+fixed anything.
+
+## How approval/rejection works
+
+PASS shows a plain Approve button. WARN shows a required
+acknowledgement checkbox that must be ticked before the Approve button
+even becomes clickable — the UI cannot set `acknowledge_warning=true`
+on its own. FAIL shows a disabled Approve button with the reason
+written next to it. Reject is always available and never deletes
+anything.
+
+## Genuine implementation difficulty this milestone
+
+Streamlit reruns the entire script on every interaction, so
+"remembering" which requirement's edit box is open, or that an
+extraction just completed, has to live in `session_state` rather than
+ordinary Python variables. Getting the "Load Demo Scenario" button to
+correctly pre-fill the text area required using Streamlit's `on_click`
+callback (which runs *before* the rerun's widgets are drawn) rather
+than a plain post-click check — the more obvious approach silently
+fails to update the text area on the same click.
+
+## How the Streamlit layer was tested
+
+11 new tests cover `api_client.py` in isolation (successful calls, a
+simulated network failure, a backend error response with and without
+a `detail` field, and that each function sends the correct method,
+path, and JSON body) — all via `monkeypatch` on `httpx.request`, no
+real network calls. Streamlit's own widget-level behaviour was not
+unit-tested; instead the app was smoke-tested by actually launching it
+(`streamlit run`) and confirming it starts cleanly and serves a page,
+since pixel/widget-level tests for a page this thin would add
+complexity without meaningfully increasing confidence. All 176
+pre-existing tests continue to pass unchanged — 187 total, 0 failures.
 
 ## How I would explain Module 1 in an interview
 

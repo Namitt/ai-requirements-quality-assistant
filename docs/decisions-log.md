@@ -474,3 +474,52 @@ or GraphQL-style field selection would start to earn its keep, so
 screens with different data needs don't each need a bespoke aggregate
 endpoint. For a single review screen in a portfolio-scale project,
 that would be complexity without a corresponding benefit.
+
+---
+
+## 2026-08-22 — Streamlit for the Module 1 UI, not React/Vite
+
+### The decision
+
+The Module 1 analyst-facing UI is a single-page Streamlit application
+(`app/ui/streamlit_app.py`) that calls the existing FastAPI endpoints
+over HTTP, rather than the React + Vite frontend originally named in
+`architecture.md`'s technology stack.
+
+### Why
+
+Module 1's entire point is the backend workflow — AI drafts,
+deterministic rules check, a human decides — and that story is fully
+proven by the API and its 176 tests before any UI exists at all.
+Streamlit renders that workflow directly in Python from the same
+Pydantic response shapes the API already returns, with no separate
+build step, no JavaScript, and no new client-side state-management
+concern. For a portfolio project whose interview value is the
+requirements-quality reasoning, not frontend engineering, that's the
+right trade: get a genuinely usable analyst tool in front of the
+existing backend with the smallest possible amount of new surface
+area.
+
+### What I rejected, and why it lost
+
+React + Vite (the option `architecture.md` originally named) was the
+alternative. It lost for this milestone specifically because it would
+have meant a real frontend build — routing, a component structure, a
+build pipeline, client-side state handling — to display the same data
+Streamlit can render directly. That's real engineering effort spent on
+something the project's central thesis doesn't depend on. The
+architecture doc's original stack table is not being overturned as a
+long-term choice, only deferred: if a later milestone genuinely needs
+a richer, more polished UI (e.g. the traceability graph view for a
+future module), React remains the documented option to revisit then.
+
+### What I'd do differently at production scale
+
+Streamlit is a legitimate choice for an internal analyst tool at
+small-to-medium scale, but it doesn't cleanly separate presentation
+from a deployable, versioned frontend artifact the way a compiled SPA
+does, and its per-interaction full-script rerun model doesn't scale to
+a complex, highly interactive multi-user interface. A production
+system serving many concurrent analysts would likely need the React
+frontend `architecture.md` originally scoped, with the Streamlit app
+either retired or kept only as an internal/admin tool.
