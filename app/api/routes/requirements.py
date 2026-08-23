@@ -93,6 +93,15 @@ def validate_requirement(
     if requirement is None:
         raise HTTPException(status_code=404, detail="Requirement not found.")
 
+    if requirement.review_status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Requirement is '{requirement.review_status}' and cannot be "
+                "re-validated. Only pending requirements can be validated."
+            ),
+        )
+
     updated_requirement = run_validation(session, requirement_id)
 
     latest_run = _latest_validation_run(session, requirement_id)

@@ -466,6 +466,54 @@ def test_approved_requirement_cannot_be_rejected(client):
 
 
 # ---------------------------------------------------------------------------
+# MANUAL RE-VALIDATION LIFECYCLE
+# ---------------------------------------------------------------------------
+
+
+def test_manual_validate_on_approved_warn_requirement_is_rejected_not_crashed(
+    client_and_sessionmaker,
+):
+    # Regression test: re-running validation on an approved WARN requirement
+    # resets its warn-acknowledgement fields while review_status stays
+    # 'approved', which used to violate ck_requirements_warn_requires_ack at
+    # commit time and surface as an unhandled 500. It must now be rejected
+    # up front with a 409, before any mutation is attempted.
+    test_client, session_factory = client_and_sessionmaker
+    requirement_id = _make_warn_requirement(test_client)
+    approved = test_client.post(
+        f"/requirements/{requirement_id}/approve", json={"acknowledge_warning": True}
+    ).json()
+    assert approved["review_status"] == "approved"
+    assert approved["warn_acknowledged_at"] is not None
+
+    response = test_client.post(f"/requirements/{requirement_id}/validate")
+
+    assert response.status_code == 409
+    with session_factory() as s:
+        requirement = s.get(Requirement, requirement_id)
+        assert requirement.review_status == "approved"
+        assert requirement.warn_acknowledged_at is not None
+        assert requirement.warn_acknowledged_by is not None
+
+
+def test_manual_validate_on_rejected_requirement_returns_409(client):
+    requirement_id = _make_pass_requirement(client)
+    client.post(f"/requirements/{requirement_id}/reject")
+
+    response = client.post(f"/requirements/{requirement_id}/validate")
+
+    assert response.status_code == 409
+
+
+def test_manual_validate_on_pending_requirement_still_succeeds(client):
+    requirement_id = _make_pass_requirement(client)
+
+    response = client.post(f"/requirements/{requirement_id}/validate")
+
+    assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
 # REVIEW
 # ---------------------------------------------------------------------------
 

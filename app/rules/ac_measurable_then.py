@@ -10,7 +10,18 @@ from app.rules.missing_acceptance_condition import (
 )
 
 _THEN_RE = re.compile(r"\bthen\b", re.IGNORECASE)
-_NEXT_CLAUSE_BOUNDARY_RE = re.compile(r"\b(?:given|when)\b", re.IGNORECASE)
+
+# The Then clause ends at whichever comes first: the end of its sentence, or
+# the start of a new structural Given/When/Then group. Only a capitalised,
+# sentence-initial "Given" is treated as a new group - ordinary lowercase
+# "given"/"when" inside the Then clause's own prose (e.g. "...shall be given
+# a discount...", "...locked when 5 attempts occur...") are not scenario
+# boundaries and must stay inside the scanned segment. Sentence-ending
+# punctuation excludes a decimal point (e.g. "2.5 seconds") via the
+# lookaround assertions, so a measurable value straddling a "." is never
+# split in half.
+_SENTENCE_END_RE = re.compile(r"(?<!\d)[.!?](?!\d)")
+_NEW_SCENARIO_RE = re.compile(r"\bGiven\b")
 
 
 def evaluate(text: str) -> RuleOutcome:
@@ -28,8 +39,12 @@ def evaluate(text: str) -> RuleOutcome:
         )
 
     remainder = text[match.end() :]
-    boundary = _NEXT_CLAUSE_BOUNDARY_RE.search(remainder)
-    then_segment = remainder[: boundary.start()] if boundary else remainder
+    boundaries = [
+        m.start()
+        for m in (_SENTENCE_END_RE.search(remainder), _NEW_SCENARIO_RE.search(remainder))
+        if m is not None
+    ]
+    then_segment = remainder[: min(boundaries)] if boundaries else remainder
     has_signal = bool(
         NUMBER_UNIT_PATTERN.search(then_segment)
         or _THRESHOLD_PHRASE_RE.search(then_segment)

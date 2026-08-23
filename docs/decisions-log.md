@@ -683,3 +683,112 @@ of a flat 409 on any post-decision approve/reject call, so an analyst
 who made a mistake has a deliberate, audited way back to `pending`
 rather than no way back at all — the same scope boundary already noted
 in the 2026-08-22 editing-restriction entry.
+
+---
+
+## 2026-08-23 — Manual re-validation is pending-only; AC_MEASURABLE_THEN's boundary is sentence-based, not word-based; migration 0003 remediates legacy invalid rows
+
+### The decision
+
+Three follow-up fixes to the state-machine fix above, found by an
+independent ultra-review of that fix's own commit:
+
+1. `POST /requirements/{id}/validate` and
+   `POST /acceptance-criteria/{id}/validate` now return 409 for any
+   non-`pending` record, exactly like `PATCH` already does. Previously
+   neither endpoint checked `review_status` at all, so re-validating an
+   approved WARN record (or one that newly evaluates to FAIL) would
+   reset its acknowledgement fields while `review_status` stayed
+   `approved`, violating that table's own approval-gating `CHECK`
+   constraint and crashing the request with an unhandled 500.
+2. `AC_MEASURABLE_THEN`'s Then-clause boundary (added in the previous
+   fix pass) now ends at the first sentence-terminal punctuation
+   (excluding a decimal point) or a capitalised, sentence-initial
+   "Given", whichever comes first — not at any occurrence of the bare
+   words "given"/"when". The word-based version fixed the original
+   multi-scenario/trailing-prose leakage but introduced a new
+   false-negative: a genuinely measurable Then clause using "when" or
+   "given" as ordinary English inside its own outcome text (e.g.
+   "...locked when 5 attempts occur...", "...shall be given a discount
+   of at least 10%...") was wrongly truncated before reaching its own
+   measurable evidence.
+3. Migration `0003` now resets `review_status` to `pending` for any
+   pre-existing row already in the `(review_status='approved',
+   validation_state='not_validated')` state — the exact state the
+   pre-fix application bug could produce — before adding the `CHECK`
+   constraint that forbids it, so the migration cannot fail against a
+   database that hit that bug.
+
+### Why
+
+**(1)** Following the exact precedent this project already established
+for `PATCH` (see the 2026-08-22 entry on restricting edits to pending
+records): once a record's `review_status` leaves `pending`, no
+endpoint should be able to mutate the facts approval was granted
+against. `/validate` mutates `validation_state` and the WARN
+acknowledgement fields, so it needed the same guard `PATCH` already
+has. This was chosen over having `/validate` "safely" reopen the
+record back to `pending` as a side effect, which would have been a
+reopening workflow — something this project has repeatedly and
+deliberately declined to build (see the 2026-08-22 and 2026-08-23
+entries above). It costs nothing: a criterion or requirement can only
+ever be stranded at `not_validated` while still `pending`, since the
+prior fix already made it impossible for `not_validated` to become
+`approved`.
+
+**(2)** A boundary needs to distinguish a genuine second
+Given/When/Then group from an ordinary use of "given"/"when" inside
+the first group's own Then clause. Sentence structure is the signal
+that actually distinguishes them in every test case this project has:
+a second scenario either starts a new sentence, or — in the one
+adversarial case without punctuation — is introduced by a capitalised
+"Given". An ordinary in-sentence "when"/"given" is neither. Word-only
+matching (the previous version) could not tell these apart because it
+looked at word identity, not sentence position.
+
+**(3)** The new `CHECK` constraint is only as safe as the data it is
+applied to. Since this project's bug window (the P0 state-machine gap)
+could have already produced exactly the row shape the constraint now
+forbids, adding the constraint without remediating existing data would
+make migration `0003` a landmine for any database that lived through
+the bug. Resetting to `pending` (rather than deleting the row or
+leaving it broken) was chosen because it is the state the corrected
+application logic would have left the record in, and it forces a
+fresh, informed approval decision rather than silently granting one.
+
+### What I rejected, and why it lost
+
+For (1): weakening or removing the `CHECK` constraints instead of
+guarding the endpoint was not seriously considered — the explicit
+instruction for this fix pass was to strengthen constraints, not
+relax them, and the constraint is doing exactly its job by catching
+the bug.
+
+For (2): dropping the boundary fix entirely (reverting to scanning to
+end-of-string) was rejected because it would resurrect the original
+multi-scenario/trailing-prose false-positive this project's previous
+fix pass was specifically about closing. A pure "sentence-only"
+boundary (dropping the capitalised-"Given" fallback) was also
+considered and rejected because it fails the adversarial case where a
+second scenario is comma-joined without a sentence break — the
+combined heuristic handles both known failure modes with no new
+regressions found in either direction.
+
+For (3): leaving migration 0003 as originally shipped and simply
+documenting the failure mode as "intentionally unsupported" was
+considered, given this project's single-user, no-real-deployment
+scope. It lost because the remediation costs two `UPDATE` statements
+and has no downside — it is not the kind of production-migration
+tooling (backfill jobs, blue/green cutover, etc.) that was scoped out
+as P3; it is the minimum a correct migration owes to the exact bug the
+constraint it's adding was written to catch.
+
+### What I'd do differently at production scale
+
+For (2): the residual gap — a second scenario using a lowercase
+"given" with no sentence break before it — would need either a
+stricter authoring convention (always capitalise scenario-starting
+keywords) enforced upstream, or a real grammatical parse instead of
+regex heuristics, to close completely. Neither is justified for this
+project's scope; see `validation-rules.md`'s "Known limitations" for
+`AC_MEASURABLE_THEN`.

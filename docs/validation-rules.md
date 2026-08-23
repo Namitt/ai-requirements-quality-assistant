@@ -301,6 +301,21 @@ permitted while it is `pending`. An already-approved or already-rejected
 requirement cannot be silently re-approved or re-rejected by calling
 the same endpoint again — the API returns a 409 conflict instead.
 
+`POST /requirements/{id}/validate` is subject to the same `pending`-only
+rule: it also returns 409 for an already-approved or already-rejected
+requirement, for the same reason `PATCH` does. Re-running validation
+recomputes `validation_state` and resets the WARN acknowledgement
+fields, which is exactly the kind of underlying-fact mutation the
+`pending`-only rule exists to prevent once a decision has been made —
+without this guard, re-validating an approved WARN requirement (or one
+that newly evaluates to FAIL) would try to write a
+`review_status='approved'` row that violates its own approval-gating
+`CHECK` constraint. Rejecting the call up front, before any mutation is
+attempted, is how that is avoided; the endpoint does not attempt to
+"safely" reset the requirement back to `pending` as a side effect,
+since that would be a reopening workflow this project has deliberately
+not built.
+
 Editing or revalidating a requirement invalidates any existing WARN
 acknowledgement: every new validation run resets
 `warn_acknowledged_at` and `warn_acknowledged_by` to NULL, so a stale
@@ -427,16 +442,26 @@ in isolation.
 
 - **Purpose:** Flag acceptance criteria whose Then clause lacks a
   measurable or testable condition.
-- **Checked:** The text between the first occurrence of "then" and the
-  next occurrence of "given" or "when" (or the end of the string, if
-  neither follows) for a number-plus-unit pattern, a
+- **Checked:** The text between the first occurrence of "then" and
+  whichever comes first — the end of that sentence, or the start of a
+  new, capitalised, sentence-initial "Given" (a second structural
+  Given/When/Then group) — for a number-plus-unit pattern, a
   comparison/threshold phrase, or a conditional connector — the exact
   same regex signals already used by `MISSING_ACCEPTANCE_CONDITION`
-  (see above), reused rather than reimplemented. Bounding the scan to
-  the next Given/When boundary keeps a second Given/When/Then group,
-  or unrelated trailing prose, from being mistaken for evidence about
-  the first Then clause. If no "then" is found at all, this rule
-  reports WARN independently of `AC_THEN_PRESENT` — the two are
+  (see above), reused rather than reimplemented. A sentence boundary is
+  any of `.`/`!`/`?` that is not immediately adjacent to a digit (so a
+  decimal value like "2.5 seconds" is never split at its own decimal
+  point). This two-part boundary is deliberate: a plain "next Given/When"
+  word match (an earlier version of this rule) would also cut the scan
+  off at an ordinary, lowercase use of "when" or "given" inside the
+  Then clause's own genuine outcome text (e.g. "...locked when 5
+  attempts occur...", "...shall be given a discount of at least
+  10%..."), producing a false WARN on a criterion that is actually
+  measurable. Requiring the capitalised, sentence-initial form for the
+  Given/When boundary — and otherwise relying on the sentence
+  boundary — distinguishes a genuine second scenario from an ordinary
+  word inside the first Then clause. If no "then" is found at all, this
+  rule reports WARN independently of `AC_THEN_PRESENT` — the two are
   separate structural facts and are never merged into one finding.
 - **Confidence:** Medium — the same reasoning as
   `MISSING_ACCEPTANCE_CONDITION`, applied to the text after "then"
@@ -454,11 +479,24 @@ in isolation.
 - **Known limitations:** Same as `MISSING_ACCEPTANCE_CONDITION` —
   highest false-positive rate in its lineage; many genuinely testable
   Then clauses are phrased without matching these specific patterns.
-  The scan is bounded to the first Then clause (up to the next
-  Given/When boundary), so a measurable signal that appears only in a
-  second Given/When/Then group, or only in trailing prose after the
-  first scenario, correctly does not count as evidence for the first
-  Then clause.
+  The scan is bounded to the first Then clause's own sentence, so a
+  measurable signal that appears only in a second Given/When/Then
+  group, or only in trailing prose after the first scenario, correctly
+  does not count as evidence for the first Then clause — including
+  when that second group is only comma-separated rather than a new
+  sentence, provided it is introduced by a capitalised "Given". The one
+  residual gap this leaves: a second scenario introduced with a
+  lowercase "given" and no sentence-ending punctuation before it (e.g.
+  "...then nothing happens, given C, when D, then the value is at
+  least 5.", all one run-on sentence with a lowercase "given") is not
+  recognised as a boundary and could still leak that second scenario's
+  measurable evidence into the first Then clause's result. This is
+  considered an acceptable residual limitation rather than a fix
+  target: it requires a specific, ungrammatical construction (a
+  missing sentence break combined with non-canonical lowercase
+  capitalisation) that is unlikely in practice, and further tightening
+  the heuristic risks reintroducing the opposite false-negative this
+  rule was just fixed to avoid.
 
 ### Approval gating (acceptance criteria)
 
@@ -482,7 +520,13 @@ validation raised after the criterion record was already committed —
 deterministic rules on demand, mirroring the equivalent
 `POST /requirements/{id}/validate` endpoint in Module 1. This is a
 recovery path only: it never calls the AI and never changes
-`current_text`.
+`current_text`. Like Module 1's endpoint, it is restricted to `pending`
+criteria and returns 409 for an already-approved or already-rejected
+one, for the same reason described above for requirements — this
+costs the recovery path nothing, since a criterion can only ever be
+stranded at `not_validated` while it is still `pending` (a
+`not_validated` criterion can never become `approved` in the first
+place).
 
 ## Known limitations of the validator as a whole
 

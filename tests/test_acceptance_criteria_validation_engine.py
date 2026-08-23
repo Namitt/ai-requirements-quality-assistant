@@ -188,6 +188,44 @@ def test_measurable_then_single_scenario_behaviour_unchanged():
     assert ac_measurable_then.evaluate(with_signal).result == "pass"
 
 
+def test_measurable_then_embedded_lowercase_when_does_not_truncate_real_evidence():
+    # "when" used as an ordinary conditional connector inside the Then
+    # clause's own outcome text (not a new scenario) must not be mistaken
+    # for a structural boundary - the measurable evidence that follows it
+    # is still part of this Then clause.
+    text = (
+        "Given a user logs in, when authentication fails, then the account "
+        "shall be locked when 5 attempts occur within 10 minutes."
+    )
+    assert ac_measurable_then.evaluate(text).result == "pass"
+
+
+def test_measurable_then_embedded_lowercase_given_does_not_truncate_real_evidence():
+    # "given" used as an ordinary past-participle verb inside the Then
+    # clause (not a new scenario, and not capitalised) must not be mistaken
+    # for a structural boundary either.
+    text = (
+        "Given a user requests a refund, when it is approved, then the "
+        "customer shall be given a discount of at least 10 percent."
+    )
+    assert ac_measurable_then.evaluate(text).result == "pass"
+
+
+def test_measurable_then_capitalised_given_still_bounds_a_second_scenario():
+    # A genuine second Given/When/Then group - signalled by a capitalised,
+    # sentence-initial "Given" - must still be excluded, even without an
+    # intervening full stop.
+    text = "Given A, when B, then nothing happens, Given C, when D, then the value is at least 5."
+    assert ac_measurable_then.evaluate(text).result == "warn"
+
+
+def test_measurable_then_decimal_number_is_not_split_at_its_own_period():
+    # The sentence-boundary heuristic must not mistake the decimal point in
+    # a measurable value (e.g. "2.5 seconds") for the end of the sentence.
+    text = "Given a request, when it is sent, then the response time shall be 2.5 seconds."
+    assert ac_measurable_then.evaluate(text).result == "pass"
+
+
 @pytest.mark.parametrize(
     "text",
     [FULL_VALID, NO_GIVEN, NO_WHEN, NO_THEN, THEN_NOT_MEASURABLE, ""],

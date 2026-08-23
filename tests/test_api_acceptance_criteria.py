@@ -321,6 +321,45 @@ def test_manual_validate_missing_criterion_returns_404(client):
     assert response.status_code == 404
 
 
+def test_manual_validate_on_approved_warn_criterion_is_rejected_not_crashed(
+    client_and_sessionmaker,
+):
+    # Regression test: re-validating an approved WARN criterion resets its
+    # warn-acknowledgement fields while review_status stays 'approved',
+    # which used to violate ck_acceptance_criteria_warn_requires_ack at
+    # commit time and surface as an unhandled 500. It must now be rejected
+    # up front with a 409, before any mutation is attempted.
+    client, session_factory = client_and_sessionmaker
+    requirement_id = _make_requirement(session_factory)
+    created = client.post(f"/requirements/{requirement_id}/acceptance-criteria").json()
+    client.patch(f"/acceptance-criteria/{created['id']}", json={"current_text": NOT_MEASURABLE})
+    approved = client.post(
+        f"/acceptance-criteria/{created['id']}/approve", json={"acknowledge_warning": True}
+    ).json()
+    assert approved["review_status"] == "approved"
+    assert approved["warn_acknowledged_at"] is not None
+
+    response = client.post(f"/acceptance-criteria/{created['id']}/validate")
+
+    assert response.status_code == 409
+    with session_factory() as s:
+        criterion = s.get(AcceptanceCriterion, created["id"])
+        assert criterion.review_status == "approved"
+        assert criterion.warn_acknowledged_at is not None
+        assert criterion.warn_acknowledged_by is not None
+
+
+def test_manual_validate_on_rejected_criterion_returns_409(client_and_sessionmaker):
+    client, session_factory = client_and_sessionmaker
+    requirement_id = _make_requirement(session_factory)
+    created = client.post(f"/requirements/{requirement_id}/acceptance-criteria").json()
+    client.post(f"/acceptance-criteria/{created['id']}/reject")
+
+    response = client.post(f"/acceptance-criteria/{created['id']}/validate")
+
+    assert response.status_code == 409
+
+
 def test_manual_validate_does_not_call_extraction_client(client_and_sessionmaker):
     client, session_factory = client_and_sessionmaker
     requirement_id = _make_requirement(session_factory)

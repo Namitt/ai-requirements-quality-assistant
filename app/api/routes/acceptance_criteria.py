@@ -162,6 +162,16 @@ def validate_acceptance_criterion(
     if criterion is None:
         raise HTTPException(status_code=404, detail="Acceptance criterion not found.")
 
+    if criterion.review_status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Acceptance criterion is '{criterion.review_status}' and "
+                "cannot be re-validated. Only pending acceptance criteria "
+                "can be validated."
+            ),
+        )
+
     updated_criterion = run_acceptance_criteria_validation(session, acceptance_criterion_id)
 
     latest_run = _latest_ac_validation_run(session, acceptance_criterion_id)

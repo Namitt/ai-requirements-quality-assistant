@@ -294,12 +294,15 @@ throughout the review and summary views.
 - **Review & approval** — the same edit / WARN-acknowledgement /
   approve / reject shape as Module 1, applied to acceptance criteria
   independently of their parent requirement. `pending`/`approved`/
-  `rejected` are one-way terminal states (approve/reject only succeed
-  from `pending`), and `not_validated` blocks approval outright, same
-  as Module 1 — both enforced at the application and database layers.
-  `POST /acceptance-criteria/{id}/validate` mirrors Module 1's
+  `rejected` are one-way terminal states (approve/reject/validate only
+  succeed from `pending`), and `not_validated` blocks approval outright,
+  same as Module 1 — both enforced at the application and database
+  layers. `POST /acceptance-criteria/{id}/validate` mirrors Module 1's
   `POST /requirements/{id}/validate` as a manual recovery path back to
-  a real validation result.
+  a real validation result; both endpoints are themselves restricted to
+  `pending` records, so re-validating can never mutate an already-decided
+  record into a state that violates its own approval-gating `CHECK`
+  constraint.
 - **Traceability** — links every criterion back to the requirement it
   was drafted for, and through that requirement to its own extracted
   evidence and source document.
