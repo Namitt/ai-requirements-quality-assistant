@@ -19,8 +19,13 @@ The demo source text must extract into a small set of candidate
 requirements that includes: at least one clean requirement (PASS), at
 least one requirement with an ambiguous or missing-condition wording
 problem (WARN), and one near-duplicate pair (FAIL on the second of the
-pair). This is planned into the fixture design, not left to chance
-during the live extraction.
+pair). The fixture (`app/ui/demo_fixture.py`) is deliberately written
+so these three outcomes are the natural reading of the source text —
+but live extraction is genuinely non-deterministic (see
+`limitations.md`), so the model's exact wording, and therefore which
+specific rule fires, can vary between runs. If a run doesn't produce
+the expected mix, fall back to replay mode (below) using a previously
+captured run that did.
 
 ## Fallback if there is no network / no API access
 
