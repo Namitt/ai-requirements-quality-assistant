@@ -15,6 +15,7 @@ from app.api.schemas import (
     AcceptanceCriteriaOut,
     AcceptanceCriteriaPatchRequest,
     AcceptanceCriteriaReviewResponse,
+    AcceptanceCriteriaValidationTriggerResponse,
     AcceptanceCriterionEditOut,
     AcceptanceCriterionProvenanceOut,
     ExtractedAcceptanceCriterionOut,
@@ -149,6 +150,27 @@ def replay_extracted_acceptance_criterion(
     return session.execute(stmt).scalar_one()
 
 
+@router.post(
+    "/acceptance-criteria/{acceptance_criterion_id}/validate",
+    response_model=AcceptanceCriteriaValidationTriggerResponse,
+    summary="Run deterministic validation for an acceptance criterion",
+)
+def validate_acceptance_criterion(
+    acceptance_criterion_id: int, session: Session = Depends(get_db_session)
+) -> AcceptanceCriteriaValidationTriggerResponse:
+    criterion = session.get(AcceptanceCriterion, acceptance_criterion_id)
+    if criterion is None:
+        raise HTTPException(status_code=404, detail="Acceptance criterion not found.")
+
+    updated_criterion = run_acceptance_criteria_validation(session, acceptance_criterion_id)
+
+    latest_run = _latest_ac_validation_run(session, acceptance_criterion_id)
+    return AcceptanceCriteriaValidationTriggerResponse(
+        acceptance_criterion=AcceptanceCriteriaOut.model_validate(updated_criterion),
+        validation_run=_to_validation_run_out(latest_run),
+    )
+
+
 @router.patch(
     "/acceptance-criteria/{acceptance_criterion_id}",
     response_model=AcceptanceCriteriaOut,
@@ -204,6 +226,25 @@ def approve_acceptance_criterion(
     if criterion is None:
         raise HTTPException(status_code=404, detail="Acceptance criterion not found.")
 
+    if criterion.review_status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Acceptance criterion is '{criterion.review_status}' and "
+                "cannot be approved. Only pending acceptance criteria can be "
+                "approved."
+            ),
+        )
+
+    if criterion.validation_state == "not_validated":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Acceptance criterion has not been validated yet and cannot "
+                "be approved."
+            ),
+        )
+
     if criterion.validation_state == "fail":
         raise HTTPException(
             status_code=409,
@@ -242,6 +283,16 @@ def reject_acceptance_criterion(
     criterion = session.get(AcceptanceCriterion, acceptance_criterion_id)
     if criterion is None:
         raise HTTPException(status_code=404, detail="Acceptance criterion not found.")
+
+    if criterion.review_status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Acceptance criterion is '{criterion.review_status}' and "
+                "cannot be rejected. Only pending acceptance criteria can be "
+                "rejected."
+            ),
+        )
 
     criterion.review_status = "rejected"
     session.commit()

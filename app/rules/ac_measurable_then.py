@@ -10,6 +10,7 @@ from app.rules.missing_acceptance_condition import (
 )
 
 _THEN_RE = re.compile(r"\bthen\b", re.IGNORECASE)
+_NEXT_CLAUSE_BOUNDARY_RE = re.compile(r"\b(?:given|when)\b", re.IGNORECASE)
 
 
 def evaluate(text: str) -> RuleOutcome:
@@ -26,7 +27,9 @@ def evaluate(text: str) -> RuleOutcome:
             ),
         )
 
-    then_segment = text[match.end() :]
+    remainder = text[match.end() :]
+    boundary = _NEXT_CLAUSE_BOUNDARY_RE.search(remainder)
+    then_segment = remainder[: boundary.start()] if boundary else remainder
     has_signal = bool(
         NUMBER_UNIT_PATTERN.search(then_segment)
         or _THRESHOLD_PHRASE_RE.search(then_segment)

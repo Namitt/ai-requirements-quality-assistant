@@ -197,6 +197,11 @@ class AcceptanceCriterionProvenanceOut(BaseModel):
     created_at: datetime
 
 
+class AcceptanceCriteriaValidationTriggerResponse(BaseModel):
+    acceptance_criterion: AcceptanceCriteriaOut
+    validation_run: ValidationRunOut
+
+
 class AcceptanceCriteriaReviewResponse(BaseModel):
     acceptance_criterion: AcceptanceCriteriaOut
     provenance: AcceptanceCriterionProvenanceOut

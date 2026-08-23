@@ -134,6 +134,10 @@ class Requirement(Base):
             name="ck_requirements_fail_blocks_approval",
         ),
         CheckConstraint(
+            "review_status != 'approved' OR validation_state != 'not_validated'",
+            name="ck_requirements_not_validated_blocks_approval",
+        ),
+        CheckConstraint(
             "review_status != 'approved' OR validation_state != 'warn' "
             "OR warn_acknowledged_at IS NOT NULL",
             name="ck_requirements_warn_requires_ack",
@@ -312,6 +316,10 @@ class AcceptanceCriterion(Base):
         CheckConstraint(
             "review_status != 'approved' OR validation_state != 'fail'",
             name="ck_acceptance_criteria_fail_blocks_approval",
+        ),
+        CheckConstraint(
+            "review_status != 'approved' OR validation_state != 'not_validated'",
+            name="ck_acceptance_criteria_not_validated_blocks_approval",
         ),
         CheckConstraint(
             "review_status != 'approved' OR validation_state != 'warn' "

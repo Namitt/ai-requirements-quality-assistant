@@ -285,11 +285,21 @@ are not concatenated into one combined message.
   the analyst actually saw and considered the warning.
 - **FAIL** — blocks approval outright. There is no FAIL override
   workflow in the MVP (see `limitations.md`).
+- **NOT_VALIDATED** — blocks approval outright. A requirement that has
+  never been validated (or whose validation is still pending after an
+  edit) cannot be approved; deterministic validation must run and
+  produce a real PASS/WARN/FAIL outcome first.
 
-Both the FAIL block and the WARN acknowledgement requirement are
-enforced at the application layer (workflow and user messaging) and
-the database layer (`CHECK` constraints as a final safeguard — see
-`architecture.md`).
+Both the FAIL block, the NOT_VALIDATED block, and the WARN
+acknowledgement requirement are enforced at the application layer
+(workflow and user messaging) and the database layer (`CHECK`
+constraints as a final safeguard — see `architecture.md`).
+
+`pending`, `approved`, and `rejected` are one-way terminal states once
+an analyst decides: approving or rejecting a requirement is only
+permitted while it is `pending`. An already-approved or already-rejected
+requirement cannot be silently re-approved or re-rejected by calling
+the same endpoint again — the API returns a 409 conflict instead.
 
 Editing or revalidating a requirement invalidates any existing WARN
 acknowledgement: every new validation run resets
@@ -417,13 +427,17 @@ in isolation.
 
 - **Purpose:** Flag acceptance criteria whose Then clause lacks a
   measurable or testable condition.
-- **Checked:** The text following the first occurrence of "then" for a
-  number-plus-unit pattern, a comparison/threshold phrase, or a
-  conditional connector — the exact same regex signals already used by
-  `MISSING_ACCEPTANCE_CONDITION` (see above), reused rather than
-  reimplemented. If no "then" is found at all, this rule reports WARN
-  independently of `AC_THEN_PRESENT` — the two are separate structural
-  facts and are never merged into one finding.
+- **Checked:** The text between the first occurrence of "then" and the
+  next occurrence of "given" or "when" (or the end of the string, if
+  neither follows) for a number-plus-unit pattern, a
+  comparison/threshold phrase, or a conditional connector — the exact
+  same regex signals already used by `MISSING_ACCEPTANCE_CONDITION`
+  (see above), reused rather than reimplemented. Bounding the scan to
+  the next Given/When boundary keeps a second Given/When/Then group,
+  or unrelated trailing prose, from being mistaken for evidence about
+  the first Then clause. If no "then" is found at all, this rule
+  reports WARN independently of `AC_THEN_PRESENT` — the two are
+  separate structural facts and are never merged into one finding.
 - **Confidence:** Medium — the same reasoning as
   `MISSING_ACCEPTANCE_CONDITION`, applied to the text after "then"
   rather than the whole requirement.
@@ -440,6 +454,11 @@ in isolation.
 - **Known limitations:** Same as `MISSING_ACCEPTANCE_CONDITION` —
   highest false-positive rate in its lineage; many genuinely testable
   Then clauses are phrased without matching these specific patterns.
+  The scan is bounded to the first Then clause (up to the next
+  Given/When boundary), so a measurable signal that appears only in a
+  second Given/When/Then group, or only in trailing prose after the
+  first scenario, correctly does not count as evidence for the first
+  Then clause.
 
 ### Approval gating (acceptance criteria)
 
@@ -448,9 +467,22 @@ WARN requires an explicit, separately recorded acknowledgement
 (`warn_acknowledged_at`, `warn_acknowledged_by`) that is cleared by
 every new validation run; FAIL blocks approval outright (unreachable
 through the current four rules, but fully enforced at both the
-application and database layers). Approving, rejecting, or editing an
-acceptance criterion never changes its parent requirement's own
+application and database layers); NOT_VALIDATED also blocks approval
+outright, enforced the same way. `pending`, `approved`, and `rejected`
+are one-way terminal states here too — approving or rejecting an
+acceptance criterion is only permitted while it is `pending`, and an
+already-decided criterion returns a 409 conflict rather than being
+silently re-approved or re-rejected. Approving, rejecting, or editing
+an acceptance criterion never changes its parent requirement's own
 `review_status`.
+
+If a criterion is ever left `not_validated` — for example because
+validation raised after the criterion record was already committed —
+`POST /acceptance-criteria/{id}/validate` re-runs the four
+deterministic rules on demand, mirroring the equivalent
+`POST /requirements/{id}/validate` endpoint in Module 1. This is a
+recovery path only: it never calls the AI and never changes
+`current_text`.
 
 ## Known limitations of the validator as a whole
 

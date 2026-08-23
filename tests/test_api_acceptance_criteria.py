@@ -10,7 +10,7 @@ from app.api.deps import get_db_session, get_extraction_client
 from app.db import Base, get_engine
 from app.extraction import ExtractionCallResult
 from app.main import app
-from app.models import AcceptanceCriterion, Requirement
+from app.models import AcceptanceCriterion, Requirement, ValidationRun
 from app.seed import seed_validation_rules
 
 FULL_VALID = (
@@ -237,6 +237,102 @@ def test_replay_of_replay_returns_409(client_and_sessionmaker):
 
 
 # ---------------------------------------------------------------------------
+# manual validation
+# ---------------------------------------------------------------------------
+
+
+def test_manual_validate_endpoint_returns_criterion_and_run(client_and_sessionmaker):
+    client, session_factory = client_and_sessionmaker
+    requirement_id = _make_requirement(session_factory)
+    created = client.post(f"/requirements/{requirement_id}/acceptance-criteria").json()
+
+    response = client.post(f"/acceptance-criteria/{created['id']}/validate")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["acceptance_criterion"]["id"] == created["id"]
+    assert body["validation_run"]["acceptance_criterion_id"] == created["id"]
+    assert len(body["validation_run"]["results"]) == 4
+
+
+def test_manual_validate_regenerates_deterministic_results(client_and_sessionmaker):
+    client, session_factory = client_and_sessionmaker
+    requirement_id = _make_requirement(session_factory)
+    created = client.post(f"/requirements/{requirement_id}/acceptance-criteria").json()
+
+    with session_factory() as s:
+        criterion = s.get(AcceptanceCriterion, created["id"])
+        criterion.validation_state = "not_validated"
+        s.commit()
+
+    response = client.post(f"/acceptance-criteria/{created['id']}/validate")
+
+    assert response.status_code == 200
+    assert response.json()["acceptance_criterion"]["validation_state"] == "pass"
+    with session_factory() as s:
+        criterion = s.get(AcceptanceCriterion, created["id"])
+        assert criterion.validation_state == "pass"
+
+
+def test_manual_validate_creates_new_validation_run(client_and_sessionmaker):
+    client, session_factory = client_and_sessionmaker
+    requirement_id = _make_requirement(session_factory)
+    created = client.post(f"/requirements/{requirement_id}/acceptance-criteria").json()
+
+    with session_factory() as s:
+        runs_before = (
+            s.query(ValidationRun)
+            .filter_by(acceptance_criterion_id=created["id"])
+            .count()
+        )
+
+    client.post(f"/acceptance-criteria/{created['id']}/validate")
+
+    with session_factory() as s:
+        runs_after = (
+            s.query(ValidationRun)
+            .filter_by(acceptance_criterion_id=created["id"])
+            .count()
+        )
+    assert runs_after == runs_before + 1
+
+
+def test_manual_validate_resets_warn_acknowledgement(client_and_sessionmaker):
+    from datetime import datetime, timezone
+
+    client, session_factory = client_and_sessionmaker
+    requirement_id = _make_requirement(session_factory)
+    created = client.post(f"/requirements/{requirement_id}/acceptance-criteria").json()
+
+    with session_factory() as s:
+        criterion = s.get(AcceptanceCriterion, created["id"])
+        criterion.warn_acknowledged_at = datetime.now(timezone.utc)
+        criterion.warn_acknowledged_by = "local-analyst"
+        s.commit()
+
+    response = client.post(f"/acceptance-criteria/{created['id']}/validate")
+
+    assert response.json()["acceptance_criterion"]["warn_acknowledged_at"] is None
+    assert response.json()["acceptance_criterion"]["warn_acknowledged_by"] is None
+
+
+def test_manual_validate_missing_criterion_returns_404(client):
+    response = client.post("/acceptance-criteria/999999/validate")
+    assert response.status_code == 404
+
+
+def test_manual_validate_does_not_call_extraction_client(client_and_sessionmaker):
+    client, session_factory = client_and_sessionmaker
+    requirement_id = _make_requirement(session_factory)
+    created = client.post(f"/requirements/{requirement_id}/acceptance-criteria").json()
+    app.dependency_overrides[get_extraction_client] = lambda: RaisingExtractionClient()
+
+    response = client.post(f"/acceptance-criteria/{created['id']}/validate")
+
+    assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
 # edit / revalidation
 # ---------------------------------------------------------------------------
 
@@ -369,6 +465,40 @@ def test_approve_missing_criterion_returns_404(client):
     assert response.status_code == 404
 
 
+def test_not_validated_criterion_cannot_be_approved(client_and_sessionmaker):
+    client, session_factory = client_and_sessionmaker
+    requirement_id = _make_requirement(session_factory)
+    created = client.post(f"/requirements/{requirement_id}/acceptance-criteria").json()
+
+    with session_factory() as s:
+        criterion = s.get(AcceptanceCriterion, created["id"])
+        criterion.validation_state = "not_validated"
+        s.commit()
+
+    response = client.post(f"/acceptance-criteria/{created['id']}/approve")
+    assert response.status_code == 409
+
+
+def test_rejected_criterion_cannot_be_approved(client_and_sessionmaker):
+    client, session_factory = client_and_sessionmaker
+    requirement_id = _make_requirement(session_factory)
+    created = client.post(f"/requirements/{requirement_id}/acceptance-criteria").json()
+    client.post(f"/acceptance-criteria/{created['id']}/reject")
+
+    response = client.post(f"/acceptance-criteria/{created['id']}/approve")
+    assert response.status_code == 409
+
+
+def test_approved_criterion_cannot_be_approved_again(client_and_sessionmaker):
+    client, session_factory = client_and_sessionmaker
+    requirement_id = _make_requirement(session_factory)
+    created = client.post(f"/requirements/{requirement_id}/acceptance-criteria").json()
+    client.post(f"/acceptance-criteria/{created['id']}/approve")
+
+    response = client.post(f"/acceptance-criteria/{created['id']}/approve")
+    assert response.status_code == 409
+
+
 def test_approving_criterion_never_changes_parent_requirement_status(client_and_sessionmaker):
     client, session_factory = client_and_sessionmaker
     requirement_id = _make_requirement(session_factory)
@@ -420,6 +550,26 @@ def test_rejecting_criterion_never_changes_parent_requirement_status(client_and_
 def test_reject_missing_criterion_returns_404(client):
     response = client.post("/acceptance-criteria/999999/reject")
     assert response.status_code == 404
+
+
+def test_approved_criterion_cannot_be_rejected(client_and_sessionmaker):
+    client, session_factory = client_and_sessionmaker
+    requirement_id = _make_requirement(session_factory)
+    created = client.post(f"/requirements/{requirement_id}/acceptance-criteria").json()
+    client.post(f"/acceptance-criteria/{created['id']}/approve")
+
+    response = client.post(f"/acceptance-criteria/{created['id']}/reject")
+    assert response.status_code == 409
+
+
+def test_rejected_criterion_cannot_be_rejected_again(client_and_sessionmaker):
+    client, session_factory = client_and_sessionmaker
+    requirement_id = _make_requirement(session_factory)
+    created = client.post(f"/requirements/{requirement_id}/acceptance-criteria").json()
+    client.post(f"/acceptance-criteria/{created['id']}/reject")
+
+    response = client.post(f"/acceptance-criteria/{created['id']}/reject")
+    assert response.status_code == 409
 
 
 # ---------------------------------------------------------------------------

@@ -109,6 +109,7 @@ requirements(
   warn_acknowledged_by NULL,
   created_at, updated_at,
   CHECK (review_status != 'approved' OR validation_state != 'fail'),
+  CHECK (review_status != 'approved' OR validation_state != 'not_validated'),
   CHECK (
     review_status != 'approved'
     OR validation_state != 'warn'
@@ -292,7 +293,13 @@ throughout the review and summary views.
   validation subsystem.
 - **Review & approval** — the same edit / WARN-acknowledgement /
   approve / reject shape as Module 1, applied to acceptance criteria
-  independently of their parent requirement.
+  independently of their parent requirement. `pending`/`approved`/
+  `rejected` are one-way terminal states (approve/reject only succeed
+  from `pending`), and `not_validated` blocks approval outright, same
+  as Module 1 — both enforced at the application and database layers.
+  `POST /acceptance-criteria/{id}/validate` mirrors Module 1's
+  `POST /requirements/{id}/validate` as a manual recovery path back to
+  a real validation result.
 - **Traceability** — links every criterion back to the requirement it
   was drafted for, and through that requirement to its own extracted
   evidence and source document.
@@ -330,6 +337,7 @@ acceptance_criteria(
   warn_acknowledged_at NULL, warn_acknowledged_by NULL,
   created_at, updated_at,
   CHECK (review_status != 'approved' OR validation_state != 'fail'),
+  CHECK (review_status != 'approved' OR validation_state != 'not_validated'),
   CHECK (
     review_status != 'approved'
     OR validation_state != 'warn'

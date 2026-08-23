@@ -183,6 +183,21 @@ def approve_requirement(
     if requirement is None:
         raise HTTPException(status_code=404, detail="Requirement not found.")
 
+    if requirement.review_status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Requirement is '{requirement.review_status}' and cannot be "
+                "approved. Only pending requirements can be approved."
+            ),
+        )
+
+    if requirement.validation_state == "not_validated":
+        raise HTTPException(
+            status_code=409,
+            detail="Requirement has not been validated yet and cannot be approved.",
+        )
+
     if requirement.validation_state == "fail":
         raise HTTPException(
             status_code=409,
@@ -221,6 +236,15 @@ def reject_requirement(
     requirement = session.get(Requirement, requirement_id)
     if requirement is None:
         raise HTTPException(status_code=404, detail="Requirement not found.")
+
+    if requirement.review_status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Requirement is '{requirement.review_status}' and cannot be "
+                "rejected. Only pending requirements can be rejected."
+            ),
+        )
 
     requirement.review_status = "rejected"
     session.commit()

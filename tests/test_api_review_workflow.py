@@ -91,6 +91,14 @@ def _make_pass_requirement(test_client) -> int:
     return _extract_and_validate(test_client, CLEAN_TEXT)
 
 
+def _make_unvalidated_requirement(test_client, text: str = CLEAN_TEXT) -> int:
+    app.dependency_overrides[get_extraction_client] = lambda: FakeExtractionClient(
+        _extraction_payload(text)
+    )
+    created = test_client.post("/extractions", json={"raw_text": text}).json()
+    return created["extracted_requirements"][0]["requirements"][0]["id"]
+
+
 def _make_duplicate_pair(test_client) -> tuple[int, int]:
     # Near-identical text (differs only by "attempts"/"attempt"), empirically
     # verified elsewhere in this project to score ~0.99 similarity under
@@ -363,6 +371,23 @@ def test_approve_missing_requirement_returns_404(client):
     assert response.status_code == 404
 
 
+def test_not_validated_requirement_cannot_be_approved(client):
+    requirement_id = _make_unvalidated_requirement(client)
+
+    response = client.post(f"/requirements/{requirement_id}/approve")
+
+    assert response.status_code == 409
+
+
+def test_rejected_requirement_cannot_be_approved(client):
+    requirement_id = _make_pass_requirement(client)
+    client.post(f"/requirements/{requirement_id}/reject")
+
+    response = client.post(f"/requirements/{requirement_id}/approve")
+
+    assert response.status_code == 409
+
+
 # ---------------------------------------------------------------------------
 # REJECT
 # ---------------------------------------------------------------------------
@@ -429,6 +454,15 @@ def test_rejection_preserves_extracted_evidence(client):
 def test_reject_missing_requirement_returns_404(client):
     response = client.post("/requirements/999999/reject")
     assert response.status_code == 404
+
+
+def test_approved_requirement_cannot_be_rejected(client):
+    requirement_id = _make_pass_requirement(client)
+    client.post(f"/requirements/{requirement_id}/approve")
+
+    response = client.post(f"/requirements/{requirement_id}/reject")
+
+    assert response.status_code == 409
 
 
 # ---------------------------------------------------------------------------

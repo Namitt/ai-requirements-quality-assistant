@@ -615,3 +615,71 @@ candidate criteria at once (batch drafting), the run-table pattern
 would become the right structure again, and this per-record approach
 would need a real migration rather than a graceful extension — that
 asymmetry is the main cost of choosing the leaner structure now.
+
+---
+
+## 2026-08-23 — Approval/rejection is a one-way pending transition, and NOT_VALIDATED blocks approval (Module 1 + Module 2)
+
+### The decision
+
+`approve_requirement`/`reject_requirement` and
+`approve_acceptance_criterion`/`reject_acceptance_criterion` now only
+succeed while the target's `review_status` is `'pending'`; calling
+either endpoint again on an already-`approved` or already-`rejected`
+row returns 409 Conflict instead of silently changing its status.
+Approval is also now blocked outright when `validation_state` is
+`'not_validated'`, exactly like the existing FAIL block. Both rules are
+enforced at the application layer and, via a new `CHECK` constraint
+per table (`ck_requirements_not_validated_blocks_approval`,
+`ck_acceptance_criteria_not_validated_blocks_approval`, added in
+migration `0003`), at the database layer. A companion recovery
+endpoint, `POST /acceptance-criteria/{id}/validate`, was added
+mirroring the existing `POST /requirements/{id}/validate`, so a
+criterion stranded at `not_validated` (e.g. because validation raised
+after its create-transaction already committed) has a way back to a
+real PASS/WARN/FAIL outcome without a live AI call.
+
+### Why
+
+This was a defect, not a design gap: `approved`/`rejected` were
+intended to be terminal decisions (see the 2026-08-22 entry on
+restricting edits to pending requirements), but the approve/reject
+routes never actually checked `review_status`, so a rejected item could
+be approved seconds later through the same endpoint, and vice versa.
+Separately, `not_validated` was never listed in either entity's
+FAIL/WARN approval-gating constraints, so a record that had simply
+never been validated could be approved as if it had passed. Module 2's
+acceptance-criteria routes were built by mirroring Module 1's
+requirement routes, so they inherited both gaps byte-for-byte; fixing
+both entities together in one change keeps the two workflows
+consistent rather than fixing one and leaving the other silently
+inconsistent.
+
+### What I rejected, and why it lost
+
+Fixing this at the application layer only (skipping the `CHECK`
+constraint change) was considered, since none of the existing
+migrations were expected to be needed for this fix. It lost because
+the whole point of the existing FAIL-blocking and WARN-acknowledgement
+constraints is that the database is the final safeguard independent of
+application logic (see the 2026-08-22 entry on two-layer FAIL
+enforcement) — leaving `not_validated` as the one ungated case would
+have been an inconsistent exception to a principle already established
+for this exact table.
+
+A redesign of the two-phase create→validate transaction (folding
+validation into the same commit as record creation, so `not_validated`
+could never be persisted at all) was also considered as a more thorough
+fix for how a criterion ends up stranded at `not_validated` in the
+first place. It lost because it would have changed transaction
+boundaries that were a deliberate, already-reasoned design choice (see
+the acceptance-criteria replay/validation notes), for a case that the
+new manual `/validate` recovery endpoint already handles adequately.
+
+### What I'd do differently at production scale
+
+A real system would likely want a structured "reopen" workflow instead
+of a flat 409 on any post-decision approve/reject call, so an analyst
+who made a mistake has a deliberate, audited way back to `pending`
+rather than no way back at all — the same scope boundary already noted
+in the 2026-08-22 editing-restriction entry.

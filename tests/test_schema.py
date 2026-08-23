@@ -376,6 +376,14 @@ def test_approved_pass_allowed(session):
     make_requirement(session, validation_state="pass", review_status="approved")
 
 
+def test_approved_not_validated_rejected(session):
+    with pytest.raises(IntegrityError):
+        make_requirement(
+            session, validation_state="not_validated", review_status="approved"
+        )
+    session.rollback()
+
+
 # ---------------------------------------------------------------------------
 # 9-10. replay constraints
 # ---------------------------------------------------------------------------
@@ -694,6 +702,19 @@ def test_ac_approved_pass_allowed(session):
     make_acceptance_criterion(
         session, extracted, validation_state="pass", review_status="approved"
     )
+
+
+def test_ac_approved_not_validated_rejected(session):
+    _, _, _, requirement = full_ai_chain(session)
+    extracted = make_extracted_acceptance_criterion(session, requirement)
+    with pytest.raises(IntegrityError):
+        make_acceptance_criterion(
+            session,
+            extracted,
+            validation_state="not_validated",
+            review_status="approved",
+        )
+    session.rollback()
 
 
 def test_acceptance_criterion_edit_linked(session):

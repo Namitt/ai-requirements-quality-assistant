@@ -19,6 +19,7 @@ from app.models import (
     ValidationRule,
     ValidationRun,
 )
+from app.rules import ac_measurable_then
 from app.seed import seed_validation_rules
 from app.validation_engine import EXPECTED_RULE_CODES, run_validation
 
@@ -142,12 +143,61 @@ def test_ac_measurable_then_warns_when_then_present_but_not_measurable(session):
     assert _result_for(session, criterion.id, "AC_MEASURABLE_THEN") == "warn"
 
 
-def test_no_ac_rule_ever_produces_fail(session):
-    for text in (FULL_VALID, NO_GIVEN, NO_WHEN, NO_THEN, THEN_NOT_MEASURABLE, ""):
-        criterion = make_acceptance_criterion(session, text or "x")
-        run_acceptance_criteria_validation(session, criterion.id)
-        for code in EXPECTED_AC_RULE_CODES:
-            assert _result_for(session, criterion.id, code) != "fail"
+# ---------------------------------------------------------------------------
+# AC_MEASURABLE_THEN - Then-clause boundary (direct rule unit tests)
+# ---------------------------------------------------------------------------
+
+
+def test_measurable_then_evidence_in_first_then_passes():
+    text = (
+        "Given a user with 5 failed login attempts, when they attempt to "
+        "log in again, then the system shall lock the account within 2 "
+        "seconds."
+    )
+    assert ac_measurable_then.evaluate(text).result == "pass"
+
+
+def test_measurable_then_no_evidence_in_first_then_warns():
+    text = (
+        "Given a user with 5 failed login attempts, when they attempt to "
+        "log in again, then the system shall lock the account."
+    )
+    assert ac_measurable_then.evaluate(text).result == "warn"
+
+
+def test_measurable_then_evidence_only_in_second_scenario_does_not_leak():
+    text = (
+        "Given A, when B, then nothing happens. Given C, when D, then the "
+        "value is at least 5."
+    )
+    assert ac_measurable_then.evaluate(text).result == "warn"
+
+
+def test_measurable_then_trailing_prose_does_not_leak():
+    text = (
+        "Given A, when B, then C happens. Note: when this occurs later, "
+        "escalate to 5 people."
+    )
+    assert ac_measurable_then.evaluate(text).result == "warn"
+
+
+def test_measurable_then_single_scenario_behaviour_unchanged():
+    no_signal = "Given A, when B, then C happens."
+    with_signal = "Given A, when B, then the count shall not exceed 10 items."
+    assert ac_measurable_then.evaluate(no_signal).result == "warn"
+    assert ac_measurable_then.evaluate(with_signal).result == "pass"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [FULL_VALID, NO_GIVEN, NO_WHEN, NO_THEN, THEN_NOT_MEASURABLE, ""],
+    ids=["full_valid", "no_given", "no_when", "no_then", "then_not_measurable", "empty"],
+)
+def test_no_ac_rule_ever_produces_fail(session, text):
+    criterion = make_acceptance_criterion(session, text)
+    run_acceptance_criteria_validation(session, criterion.id)
+    for code in EXPECTED_AC_RULE_CODES:
+        assert _result_for(session, criterion.id, code) != "fail"
 
 
 # ---------------------------------------------------------------------------
