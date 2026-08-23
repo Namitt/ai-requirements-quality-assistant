@@ -850,3 +850,78 @@ a property-based or fuzz-style test generating varied Given/When/Then
 phrasings (capitalisation, punctuation, keyword choice) would likely
 have surfaced both gaps before merge, rather than requiring two
 separate rounds of manual review to find them one at a time.
+
+---
+
+## 2026-08-23 — `/health` verifies real dependencies; dependency locking uses plain `pip freeze`, not a new package manager
+
+### The decision
+
+Two independent release-readiness fixes:
+
+1. `GET /health` now depends on the database session and returns `503`
+   (not `200`) when the database is unreachable/unmigrated, or when the
+   `validation_rules` catalog is missing any of the 9 codes the
+   validation engines require — instead of unconditionally returning
+   `{"status": "ok"}` regardless of database state.
+2. `requirements-lock.txt`, a plain `pip freeze` snapshot of this
+   project's exact resolved dependency tree, was added alongside
+   `pyproject.toml`'s abstract version ranges. No new package manager
+   (Poetry, uv, pip-tools) was adopted.
+
+### Why
+
+**(1)** A production-readiness review found `/health` reporting
+healthy while every real request 500'd on a freshly-migrated-but-
+unseeded database (the exact gap migration `0004` fixes) — the one
+operational signal this service exposes was actively misleading.
+Checking the `validation_rules` catalog specifically, rather than just
+"can I open a connection," directly verifies the dependency every
+validate call actually needs, matching how the bug that motivated this
+change actually manifested.
+
+**(2)** `pyproject.toml` pins only ranges (e.g. `fastapi>=0.110,<1.0`,
+`streamlit>=1.35,<2.0`) — wide enough that a from-scratch install today
+versus in six months could resolve materially different transitive
+dependency versions. Inspecting the actual `.venv` showed a coherent,
+fully-attributable dependency closure (every one of ~60 packages traces
+to a transitive dependency of the 8 declared direct dependencies, e.g.
+streamlit pulling in pandas/numpy/pyarrow/altair) — not an unrelated,
+bloated shared environment — so a `pip freeze` snapshot of it is an
+accurate, trustworthy record worth keeping, at the cost of one command
+and one file.
+
+### What I rejected, and why it lost
+
+For (2): adopting Poetry or uv specifically to get a "real" lock file
+(with hashes, a resolver, etc.) was considered and rejected as
+disproportionate tooling churn for a single-developer, single-machine,
+no-CI portfolio project — it would mean migrating the entire
+dependency-management workflow for a reproducibility benefit this
+project's actual usage pattern doesn't need. Not adding any lock file
+at all was also considered, since the project's own documented scope
+(`docs/limitations.md`) is explicitly "local demonstration tool, not a
+deployed service" — but a `pip freeze` snapshot costs nothing new (pip
+is already the only tool used to manage this environment) and directly
+answers "what did this actually run against when the tests last passed
+end to end," which is worth having even for a single developer
+returning to the project after time away.
+
+For (1): checking only that the database file/connection is reachable
+(without checking `validation_rules` specifically) was considered and
+rejected because it would not have caught the actual bug that prompted
+this fix — a reachable, correctly-schema'd database with an empty
+catalog. The check needed to verify the specific dependency the
+application's core feature actually needs, not just generic
+connectivity.
+
+### What I'd do differently at production scale
+
+`/health`'s dependency check queries the full `validation_rules` table
+on every call, which is fine at this project's scale (a handful of
+rows, a single local user) but would want caching or a lighter-weight
+check (e.g. a cheap `SELECT 1` plus a periodically-refreshed catalog
+check) under real load. If this project ever gained multiple
+contributors, CI, or deployment targets beyond a single developer's
+machine, the dependency-locking answer would likely flip toward a real
+lock-file tool with hash verification.

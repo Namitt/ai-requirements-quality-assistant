@@ -78,6 +78,61 @@ def test_application_starts_and_responds(client):
     assert response.json() == {"status": "ok"}
 
 
+def test_health_reports_unavailable_when_database_has_no_schema(tmp_path):
+    # No Base.metadata.create_all() at all - simulates a database that has
+    # never been migrated (no tables exist yet).
+    db_path = tmp_path / "unmigrated.db"
+    engine = get_engine(f"sqlite:///{db_path}")
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def override_get_db_session():
+        session: Session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db_session] = override_get_db_session
+    try:
+        with TestClient(app, raise_server_exceptions=False) as test_client:
+            response = test_client.get("/health")
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
+
+    assert response.status_code == 503
+    assert "alembic upgrade head" in response.json()["detail"]
+
+
+def test_health_reports_unavailable_when_validation_rules_catalog_is_empty(tmp_path):
+    # Schema exists (tables created) but validation_rules was never
+    # seeded - the exact fresh-database gap the seeding migration fixes.
+    db_path = tmp_path / "unseeded.db"
+    engine = get_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    def override_get_db_session():
+        session: Session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db_session] = override_get_db_session
+    try:
+        with TestClient(app, raise_server_exceptions=False) as test_client:
+            response = test_client.get("/health")
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
+
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert "incomplete" in detail
+    assert "DUPLICATE_NEAR" in detail
+
+
 # ---------------------------------------------------------------------------
 # successful extraction
 # ---------------------------------------------------------------------------
