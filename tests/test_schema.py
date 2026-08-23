@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.db import Base, get_engine
 from app.models import (
+    AcceptanceCriterion,
+    AcceptanceCriterionEdit,
+    ExtractedAcceptanceCriterion,
     ExtractedRequirement,
     ExtractionRun,
     Requirement,
@@ -26,6 +29,9 @@ EXPECTED_TABLES = {
     "validation_rules",
     "validation_runs",
     "validation_results",
+    "extracted_acceptance_criteria",
+    "acceptance_criteria",
+    "acceptance_criteria_edits",
 }
 
 
@@ -514,6 +520,249 @@ def test_duplicate_validation_result_same_run_and_rule_rejected(session):
     session.add(
         ValidationResult(
             validation_run_id=run.id, rule_id=rule.id, result="warn", message="again"
+        )
+    )
+    with pytest.raises(IntegrityError):
+        session.flush()
+    session.rollback()
+
+
+# ---------------------------------------------------------------------------
+# 17. acceptance criteria tables (Module 2)
+# ---------------------------------------------------------------------------
+
+
+def make_extracted_acceptance_criterion(
+    session: Session,
+    requirement: Requirement,
+    mode: str = "live",
+    replayed_from_id: int | None = None,
+) -> ExtractedAcceptanceCriterion:
+    extracted = ExtractedAcceptanceCriterion(
+        requirement_id=requirement.id,
+        criterion_text="Given X, when Y, then Z.",
+        mode=mode,
+        replayed_from_id=replayed_from_id,
+        model_name="test-model",
+        prompt_version="v1",
+    )
+    session.add(extracted)
+    session.flush()
+    return extracted
+
+
+def make_acceptance_criterion(
+    session: Session, extracted: ExtractedAcceptanceCriterion, **overrides
+) -> AcceptanceCriterion:
+    kwargs = dict(
+        source_extraction_id=extracted.id,
+        current_text="Given X, when Y, then Z.",
+    )
+    kwargs.update(overrides)
+    criterion = AcceptanceCriterion(**kwargs)
+    session.add(criterion)
+    session.flush()
+    return criterion
+
+
+@pytest.mark.parametrize("mode", ["live", "replay"])
+def test_ac_valid_mode_accepted(session, mode):
+    _, _, _, requirement = full_ai_chain(session)
+    replayed_from = None
+    if mode == "replay":
+        live = make_extracted_acceptance_criterion(session, requirement, mode="live")
+        replayed_from = live.id
+    make_extracted_acceptance_criterion(
+        session, requirement, mode=mode, replayed_from_id=replayed_from
+    )
+
+
+def test_ac_invalid_mode_rejected(session):
+    _, _, _, requirement = full_ai_chain(session)
+    session.add(
+        ExtractedAcceptanceCriterion(
+            requirement_id=requirement.id,
+            criterion_text="x",
+            mode="bogus",
+            model_name="m",
+            prompt_version="v1",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        session.flush()
+    session.rollback()
+
+
+def test_ac_live_with_replay_source_rejected(session):
+    _, _, _, requirement = full_ai_chain(session)
+    other = make_extracted_acceptance_criterion(session, requirement, mode="live")
+    with pytest.raises(IntegrityError):
+        make_extracted_acceptance_criterion(
+            session, requirement, mode="live", replayed_from_id=other.id
+        )
+    session.rollback()
+
+
+def test_ac_replay_without_replay_source_rejected(session):
+    _, _, _, requirement = full_ai_chain(session)
+    with pytest.raises(IntegrityError):
+        make_extracted_acceptance_criterion(session, requirement, mode="replay")
+    session.rollback()
+
+
+def test_ac_replay_source_can_be_replayed_again(session):
+    _, _, _, requirement = full_ai_chain(session)
+    live = make_extracted_acceptance_criterion(session, requirement, mode="live")
+    make_extracted_acceptance_criterion(
+        session, requirement, mode="replay", replayed_from_id=live.id
+    )
+
+
+@pytest.mark.parametrize("state", ["not_validated", "pass", "warn", "fail"])
+def test_ac_valid_validation_state_accepted(session, state):
+    _, _, _, requirement = full_ai_chain(session)
+    extracted = make_extracted_acceptance_criterion(session, requirement)
+    make_acceptance_criterion(session, extracted, validation_state=state)
+
+
+def test_ac_invalid_validation_state_rejected(session):
+    _, _, _, requirement = full_ai_chain(session)
+    extracted = make_extracted_acceptance_criterion(session, requirement)
+    with pytest.raises(IntegrityError):
+        make_acceptance_criterion(session, extracted, validation_state="bogus")
+    session.rollback()
+
+
+@pytest.mark.parametrize("status", ["pending", "rejected"])
+def test_ac_valid_review_status_accepted(session, status):
+    _, _, _, requirement = full_ai_chain(session)
+    extracted = make_extracted_acceptance_criterion(session, requirement)
+    make_acceptance_criterion(session, extracted, review_status=status)
+
+
+def test_ac_invalid_review_status_rejected(session):
+    _, _, _, requirement = full_ai_chain(session)
+    extracted = make_extracted_acceptance_criterion(session, requirement)
+    with pytest.raises(IntegrityError):
+        make_acceptance_criterion(session, extracted, review_status="bogus")
+    session.rollback()
+
+
+def test_ac_approved_fail_rejected(session):
+    _, _, _, requirement = full_ai_chain(session)
+    extracted = make_extracted_acceptance_criterion(session, requirement)
+    with pytest.raises(IntegrityError):
+        make_acceptance_criterion(
+            session, extracted, validation_state="fail", review_status="approved"
+        )
+    session.rollback()
+
+
+def test_ac_approved_warn_without_ack_rejected(session):
+    _, _, _, requirement = full_ai_chain(session)
+    extracted = make_extracted_acceptance_criterion(session, requirement)
+    with pytest.raises(IntegrityError):
+        make_acceptance_criterion(
+            session,
+            extracted,
+            validation_state="warn",
+            review_status="approved",
+            warn_acknowledged_at=None,
+            warn_acknowledged_by=None,
+        )
+    session.rollback()
+
+
+def test_ac_approved_warn_with_ack_allowed(session):
+    from datetime import datetime, timezone
+
+    _, _, _, requirement = full_ai_chain(session)
+    extracted = make_extracted_acceptance_criterion(session, requirement)
+    make_acceptance_criterion(
+        session,
+        extracted,
+        validation_state="warn",
+        review_status="approved",
+        warn_acknowledged_at=datetime.now(timezone.utc),
+        warn_acknowledged_by="local-analyst",
+    )
+
+
+def test_ac_approved_pass_allowed(session):
+    _, _, _, requirement = full_ai_chain(session)
+    extracted = make_extracted_acceptance_criterion(session, requirement)
+    make_acceptance_criterion(
+        session, extracted, validation_state="pass", review_status="approved"
+    )
+
+
+def test_acceptance_criterion_edit_linked(session):
+    _, _, _, requirement = full_ai_chain(session)
+    extracted = make_extracted_acceptance_criterion(session, requirement)
+    criterion = make_acceptance_criterion(session, extracted)
+    edit = AcceptanceCriterionEdit(
+        acceptance_criterion_id=criterion.id,
+        previous_text="old",
+        new_text="new",
+        edited_by="local-analyst",
+    )
+    session.add(edit)
+    session.flush()
+    assert edit.acceptance_criterion_id == criterion.id
+
+
+def test_acceptance_criterion_edit_rejects_missing_criterion(session):
+    session.add(
+        AcceptanceCriterionEdit(
+            acceptance_criterion_id=999, previous_text="old", new_text="new"
+        )
+    )
+    with pytest.raises(IntegrityError):
+        session.flush()
+    session.rollback()
+
+
+# ---------------------------------------------------------------------------
+# 18. validation_runs exactly-one-parent CHECK (shared table, Module 1 + 2)
+# ---------------------------------------------------------------------------
+
+
+def test_validation_run_requirement_only_still_valid(session):
+    _, _, _, requirement = full_ai_chain(session)
+    run = ValidationRun(requirement_id=requirement.id, validator_version="1.0.0")
+    session.add(run)
+    session.flush()
+    assert run.requirement_id == requirement.id
+    assert run.acceptance_criterion_id is None
+
+
+def test_validation_run_acceptance_criterion_only_valid(session):
+    _, _, _, requirement = full_ai_chain(session)
+    extracted = make_extracted_acceptance_criterion(session, requirement)
+    criterion = make_acceptance_criterion(session, extracted)
+    run = ValidationRun(acceptance_criterion_id=criterion.id, validator_version="1.0.0")
+    session.add(run)
+    session.flush()
+    assert run.acceptance_criterion_id == criterion.id
+    assert run.requirement_id is None
+
+
+def test_validation_run_both_null_rejected(session):
+    session.add(ValidationRun(validator_version="1.0.0"))
+    with pytest.raises(IntegrityError):
+        session.flush()
+    session.rollback()
+
+
+def test_validation_run_both_populated_rejected(session):
+    _, _, _, requirement = full_ai_chain(session)
+    extracted = make_extracted_acceptance_criterion(session, requirement)
+    criterion = make_acceptance_criterion(session, extracted)
+    session.add(
+        ValidationRun(
+            requirement_id=requirement.id,
+            acceptance_criterion_id=criterion.id,
+            validator_version="1.0.0",
         )
     )
     with pytest.raises(IntegrityError):

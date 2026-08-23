@@ -10,6 +10,11 @@ from app.extraction import (
     ExtractionParseError,
     SourceQuoteNotFoundError,
 )
+from app.acceptance_criteria import AcceptanceCriteriaParseError
+from app.acceptance_criteria_engine import (
+    AcceptanceCriteriaReplaySourceNotFoundError,
+    AcceptanceCriteriaReplaySourceNotLiveError,
+)
 from app.extraction_engine import ReplaySourceNotFoundError, ReplaySourceNotLiveError
 from app.validation_engine import ValidationConfigurationError
 
@@ -41,6 +46,28 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(ReplaySourceNotLiveError)
     async def handle_replay_source_not_live(request: Request, exc: ReplaySourceNotLiveError):
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    # Acceptance-criteria drafting: the model response could not be parsed
+    # into a single criterion - same treatment as ExtractionParseError above.
+    @app.exception_handler(AcceptanceCriteriaParseError)
+    async def handle_acceptance_criteria_parse_error(
+        request: Request, exc: AcceptanceCriteriaParseError
+    ):
+        return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+    # Acceptance-criteria replay: the same not-found/not-live distinction as
+    # extraction replay, applied to extracted_acceptance_criteria rows.
+    @app.exception_handler(AcceptanceCriteriaReplaySourceNotFoundError)
+    async def handle_ac_replay_source_not_found(
+        request: Request, exc: AcceptanceCriteriaReplaySourceNotFoundError
+    ):
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(AcceptanceCriteriaReplaySourceNotLiveError)
+    async def handle_ac_replay_source_not_live(
+        request: Request, exc: AcceptanceCriteriaReplaySourceNotLiveError
+    ):
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     # Genuine server-side misconfiguration (the validation rule catalog is

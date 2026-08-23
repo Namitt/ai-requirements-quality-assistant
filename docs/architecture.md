@@ -271,3 +271,137 @@ never presents AI output as though it has already been judged correct.
 `origin='ai_generated'` content is visually and structurally
 distinguishable from human-edited or manually authored content
 throughout the review and summary views.
+
+---
+
+# Module 2 — Acceptance Criteria Assistant
+
+## System components (additive)
+
+- **Acceptance-criteria drafting** — either calls the Anthropic API
+  (live mode, reusing the same `ExtractionClient` abstraction Module 1
+  uses) or replays a previously captured live draft (replay mode);
+  produces one immutable AI-output record paired with one reviewable
+  acceptance criterion.
+- **Acceptance-criteria validation engine** — runs four deterministic
+  structural rules against a criterion's text and produces PASS/WARN
+  results (no v1 rule can produce FAIL), each with an explanation and a
+  recommended action; runs automatically after drafting and again after
+  every edit. Reuses the existing `validation_rules` /
+  `validation_runs` / `validation_results` tables rather than a second
+  validation subsystem.
+- **Review & approval** — the same edit / WARN-acknowledgement /
+  approve / reject shape as Module 1, applied to acceptance criteria
+  independently of their parent requirement.
+- **Traceability** — links every criterion back to the requirement it
+  was drafted for, and through that requirement to its own extracted
+  evidence and source document.
+
+## Data model (additive)
+
+```
+extracted_acceptance_criteria(
+  id, requirement_id FK -> requirements.id,
+  criterion_text,
+  mode CHECK (mode IN ('live','replay')),
+  replayed_from_id FK NULL -> extracted_acceptance_criteria.id,
+  model_name, prompt_version,
+  created_at,
+  CHECK (
+    (mode = 'live' AND replayed_from_id IS NULL)
+    OR (mode = 'replay' AND replayed_from_id IS NOT NULL)
+  )
+)
+-- Immutable. No raw_response column - unlike extraction_runs, there is
+-- no run/batch concept for acceptance criteria (each live request
+-- drafts exactly one criterion), so live/replay tracking lives
+-- directly on this record rather than on a separate run table, and a
+-- replay's replayed_from_id must reference a row with mode='live' -
+-- enforced at the application layer, mirroring extraction_runs'
+-- equivalent replay-source rule.
+
+acceptance_criteria(
+  id, source_extraction_id FK NOT NULL -> extracted_acceptance_criteria.id,
+  current_text,
+  validation_state DEFAULT 'not_validated'
+    CHECK (validation_state IN ('not_validated','pass','warn','fail')),
+  review_status DEFAULT 'pending'
+    CHECK (review_status IN ('pending','approved','rejected')),
+  warn_acknowledged_at NULL, warn_acknowledged_by NULL,
+  created_at, updated_at,
+  CHECK (review_status != 'approved' OR validation_state != 'fail'),
+  CHECK (
+    review_status != 'approved'
+    OR validation_state != 'warn'
+    OR warn_acknowledged_at IS NOT NULL
+  )
+)
+-- The mutable, reviewable, approvable entity - identical lifecycle
+-- shape to requirements, minus an origin field: every acceptance
+-- criterion is AI-origin in this version, so source_extraction_id is
+-- NOT NULL (unlike requirements.source_extraction_id, which is
+-- nullable to support manually authored requirements).
+
+acceptance_criteria_edits(
+  id, acceptance_criterion_id FK -> acceptance_criteria.id,
+  previous_text, new_text, edited_by, edited_at
+)
+-- Append-only, identical shape and purpose to requirement_edits.
+```
+
+`validation_runs` is extended, not duplicated, to serve both modules:
+
+```
+validation_runs(
+  id,
+  requirement_id FK NULL -> requirements.id,
+  acceptance_criterion_id FK NULL -> acceptance_criteria.id,
+  validator_version, run_at,
+  CHECK (
+    (requirement_id IS NOT NULL AND acceptance_criterion_id IS NULL)
+    OR (requirement_id IS NULL AND acceptance_criterion_id IS NOT NULL)
+  )
+)
+```
+
+`requirement_id` was `NOT NULL` in Module 1; it is widened to nullable
+here so the same table can represent either kind of validation run,
+with the `CHECK` constraint guaranteeing every row has exactly one
+parent. `app/validation_engine.py` is unmodified and always populates
+`requirement_id`, so this change has no effect on requirement
+validation's behaviour. `validation_results` is unmodified — it is
+agnostic to which kind of parent its `validation_run` belongs to.
+
+## Rule dispatch stays separate
+
+`app/validation_engine.py::EXPECTED_RULE_CODES` (5 requirement codes)
+and `app/acceptance_criteria_validation_engine.py::EXPECTED_AC_RULE_CODES`
+(4 acceptance-criteria codes) are two independent, hardcoded dispatch
+lists in two independent engine functions. `validation_rules` holds all
+nine rows as one descriptive catalog, but the catalog itself never
+determines which rules execute for which entity — exactly the same
+non-plugin design Module 1 already established, just with two dispatch
+lists instead of one.
+
+## Live vs. replay mode (acceptance criteria)
+
+**Live:** a requirement's `current_text` → Anthropic API call (same
+`ExtractionClient` as Module 1) → new `extracted_acceptance_criteria`
+row (`mode='live'`) → paired `acceptance_criteria` row → validation.
+
+**Replay:** an existing `extracted_acceptance_criteria` row
+(`mode='live'`) is selected → a new row is created (`mode='replay'`,
+`replayed_from_id` pointing at the original, `requirement_id`,
+`criterion_text`, `model_name`, `prompt_version` all copied) → a fresh
+paired `acceptance_criteria` row is created → the same
+validation/review/approval pipeline runs. No API call is made. A
+replay can never itself be replayed, mirroring Module 1's replay-chain
+rule exactly.
+
+## AI role and boundaries (acceptance criteria)
+
+AI is used for exactly one function here too: drafting one Given/When/
+Then acceptance criterion from a requirement's text. It never
+validates, never approves, and a PASS structural result is never
+presented as a claim that the criterion is business-correct or
+QA-ready.

@@ -81,3 +81,44 @@ def approve_requirement(requirement_id: int, acknowledge_warning: bool = False) 
 
 def reject_requirement(requirement_id: int) -> dict:
     return _request("POST", f"/requirements/{requirement_id}/reject")
+
+
+def draft_acceptance_criteria(requirement_id: int) -> dict:
+    return _request("POST", f"/requirements/{requirement_id}/acceptance-criteria")
+
+
+def list_acceptance_criteria(requirement_id: int) -> list[dict]:
+    return _request("GET", f"/requirements/{requirement_id}/acceptance-criteria")
+
+
+def replay_acceptance_criteria(extracted_acceptance_criterion_id: int) -> dict:
+    return _request(
+        "POST",
+        f"/extracted-acceptance-criteria/{extracted_acceptance_criterion_id}/replay",
+    )
+
+
+def get_acceptance_criteria_review(acceptance_criterion_id: int) -> dict:
+    return _request("GET", f"/acceptance-criteria/{acceptance_criterion_id}/review")
+
+
+def patch_acceptance_criteria(acceptance_criterion_id: int, current_text: str) -> dict:
+    return _request(
+        "PATCH",
+        f"/acceptance-criteria/{acceptance_criterion_id}",
+        json={"current_text": current_text},
+    )
+
+
+def approve_acceptance_criteria(
+    acceptance_criterion_id: int, acknowledge_warning: bool = False
+) -> dict:
+    return _request(
+        "POST",
+        f"/acceptance-criteria/{acceptance_criterion_id}/approve",
+        json={"acknowledge_warning": acknowledge_warning},
+    )
+
+
+def reject_acceptance_criteria(acceptance_criterion_id: int) -> dict:
+    return _request("POST", f"/acceptance-criteria/{acceptance_criterion_id}/reject")

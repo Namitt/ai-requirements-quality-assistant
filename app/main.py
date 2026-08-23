@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from app.api.errors import register_exception_handlers
+from app.api.routes.acceptance_criteria import router as acceptance_criteria_router
 from app.api.routes.extraction import router as extraction_router
 from app.api.routes.requirements import router as requirements_router
 
@@ -21,6 +22,7 @@ register_exception_handlers(app)
 
 app.include_router(extraction_router)
 app.include_router(requirements_router)
+app.include_router(acceptance_criteria_router)
 
 
 @app.get("/health", summary="Health check", tags=["health"])

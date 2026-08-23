@@ -325,6 +325,133 @@ before a requirement can be approved again.
   Previous runs are never overwritten. `requirements.validation_state`
   remains only a cached pointer to the latest run's worst result.
 
+## Module 2 — Acceptance-criteria structural rules
+
+### Purpose and scope
+
+Four additional deterministic rules check AI-drafted Given/When/Then
+acceptance criteria (Module 2). They share the same `validation_rules`
+/ `validation_runs` / `validation_results` tables and the same
+PASS/WARN/FAIL vocabulary as the five requirement rules above, but are
+dispatched by a separate, independent engine
+(`app/acceptance_criteria_validation_engine.py`) against
+`acceptance_criteria` rows, never against `requirements` rows. Like the
+requirement rules, none of these determine whether a criterion is
+correct from a business or QA perspective — that judgement remains
+with the analyst.
+
+### Severity for this rule set
+
+All four rules are **WARN-only** in this version — none can produce
+FAIL. Applying the same confidence × significance framework used for
+the five requirement rules: each rule can only confirm the *literal
+absence of a keyword or pattern*, not that the underlying Given/When/
+Then structure is genuinely missing (an analyst could phrase a valid
+clause without the expected word), so none reaches the "detection
+confidence" bar FAIL requires — the same reasoning that keeps
+`MISSING_ACTOR` and the other three requirement rules WARN-only. The
+FAIL-blocking application and database enforcement is still fully
+implemented for this entity (see "Approval gating" below), so it is
+ready if a future, stricter rule is ever added — it is simply
+unreachable through the current four rules.
+
+### Comparison scope
+
+None of the four rules compares a criterion against any other
+criterion or requirement. Each evaluates a single criterion's own text
+in isolation.
+
+### AC_GIVEN_PRESENT — Given clause present
+
+- **Purpose:** Flag acceptance criteria missing a Given clause.
+- **Checked:** Case-insensitive, word-boundary match for the literal
+  word "given" anywhere in the criterion text.
+- **Confidence:** High that the word is present or absent; low that
+  its absence alone proves the criterion lacks a starting-context
+  clause, since a valid clause could be phrased without that word.
+- **Severity:** WARN only.
+- **Blocks approval:** No.
+- **PASS example:** "Given a user with 5 failed login attempts, when
+  they retry, then the system shall lock the account within 2
+  seconds."
+- **WARN example:** "When the user retries, then the system shall lock
+  the account within 2 seconds."
+- **Recommended BA action:** Add a Given clause describing the
+  starting context, or confirm the criterion is intentionally
+  structured differently.
+- **Known limitations:** Keyword presence only, not a grammatical
+  parse.
+
+### AC_WHEN_PRESENT — When clause present
+
+- **Purpose:** Flag acceptance criteria missing a When clause.
+- **Checked:** Case-insensitive, word-boundary match for "when".
+- **Confidence / false-positive / false-negative risk:** Same
+  reasoning as AC_GIVEN_PRESENT, applied to "when".
+- **Severity:** WARN only. **Blocks approval:** No.
+- **PASS example:** As AC_GIVEN_PRESENT's PASS example.
+- **WARN example:** "Given a user with 5 failed login attempts, then
+  the system shall lock the account within 2 seconds."
+- **Recommended BA action:** Add a When clause describing the
+  triggering action or event, or confirm the criterion is
+  intentionally structured differently.
+- **Known limitations:** Keyword presence only, not a grammatical
+  parse.
+
+### AC_THEN_PRESENT — Then clause present
+
+- **Purpose:** Flag acceptance criteria missing a Then clause.
+- **Checked:** Case-insensitive, word-boundary match for "then".
+- **Confidence / false-positive / false-negative risk:** Same
+  reasoning as AC_GIVEN_PRESENT, applied to "then".
+- **Severity:** WARN only. **Blocks approval:** No.
+- **PASS example:** As AC_GIVEN_PRESENT's PASS example.
+- **WARN example:** "Given a user with 5 failed login attempts, when
+  they retry."
+- **Recommended BA action:** Add a Then clause describing the
+  expected, verifiable outcome.
+- **Known limitations:** Keyword presence only, not a grammatical
+  parse.
+
+### AC_MEASURABLE_THEN — Measurable Then condition
+
+- **Purpose:** Flag acceptance criteria whose Then clause lacks a
+  measurable or testable condition.
+- **Checked:** The text following the first occurrence of "then" for a
+  number-plus-unit pattern, a comparison/threshold phrase, or a
+  conditional connector — the exact same regex signals already used by
+  `MISSING_ACCEPTANCE_CONDITION` (see above), reused rather than
+  reimplemented. If no "then" is found at all, this rule reports WARN
+  independently of `AC_THEN_PRESENT` — the two are separate structural
+  facts and are never merged into one finding.
+- **Confidence:** Medium — the same reasoning as
+  `MISSING_ACCEPTANCE_CONDITION`, applied to the text after "then"
+  rather than the whole requirement.
+- **False-positive risk:** High — inherited directly from the reused
+  signals; a Then clause can be genuinely testable without matching
+  any of the three patterns.
+- **Severity:** WARN only. **Blocks approval:** No.
+- **PASS example:** "...then the system shall lock the account within
+  2 seconds."
+- **WARN example:** "...then the system shall lock the account." (no
+  number, threshold phrase, or conditional connector after "then").
+- **Recommended BA action:** Add a measurable condition (a number,
+  threshold phrase, or conditional connector) to the Then clause.
+- **Known limitations:** Same as `MISSING_ACCEPTANCE_CONDITION` —
+  highest false-positive rate in its lineage; many genuinely testable
+  Then clauses are phrased without matching these specific patterns.
+
+### Approval gating (acceptance criteria)
+
+Identical rules to requirement approval gating: PASS approves directly;
+WARN requires an explicit, separately recorded acknowledgement
+(`warn_acknowledged_at`, `warn_acknowledged_by`) that is cleared by
+every new validation run; FAIL blocks approval outright (unreachable
+through the current four rules, but fully enforced at both the
+application and database layers). Approving, rejecting, or editing an
+acceptance criterion never changes its parent requirement's own
+`review_status`.
+
 ## Known limitations of the validator as a whole
 
 - Duplicate detection is text-similarity based, not semantic.

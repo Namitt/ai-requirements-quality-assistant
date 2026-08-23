@@ -48,6 +48,33 @@ VALIDATION_RULES = [
         ),
         "default_severity": "warn",
     },
+    {
+        "code": "AC_GIVEN_PRESENT",
+        "name": "Given clause present",
+        "description": "Flag acceptance criteria missing a Given clause.",
+        "default_severity": "warn",
+    },
+    {
+        "code": "AC_WHEN_PRESENT",
+        "name": "When clause present",
+        "description": "Flag acceptance criteria missing a When clause.",
+        "default_severity": "warn",
+    },
+    {
+        "code": "AC_THEN_PRESENT",
+        "name": "Then clause present",
+        "description": "Flag acceptance criteria missing a Then clause.",
+        "default_severity": "warn",
+    },
+    {
+        "code": "AC_MEASURABLE_THEN",
+        "name": "Measurable Then condition",
+        "description": (
+            "Flag acceptance criteria whose Then clause lacks a measurable "
+            "or testable condition."
+        ),
+        "default_severity": "warn",
+    },
 ]
 
 

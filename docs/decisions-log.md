@@ -523,3 +523,95 @@ a complex, highly interactive multi-user interface. A production
 system serving many concurrent analysts would likely need the React
 frontend `architecture.md` originally scoped, with the Streamlit app
 either retired or kept only as an internal/admin tool.
+
+---
+
+## 2026-08-23 — Module 2 shares validation_runs/validation_results via a nullable dual-FK, not a second validation subsystem
+
+### The decision
+
+`validation_runs` gains a nullable `acceptance_criterion_id` column
+alongside the existing (now nullable) `requirement_id` column, with a
+`CHECK` constraint enforcing that exactly one of the two is populated
+on every row. `validation_results` is unchanged. Two independent
+engine functions (`run_validation()` for requirements,
+`run_acceptance_criteria_validation()` for acceptance criteria) write
+into these same shared tables, each populating only its own FK and
+using its own hardcoded rule-code dispatch list.
+
+### Why
+
+Module 2 was explicitly scoped to reuse the existing
+`validation_rules`/`validation_runs`/`validation_results` architecture
+rather than stand up a parallel validation subsystem for a second
+entity type. A nullable dual-FK with an exactly-one-parent `CHECK` is
+the standard relational way to let one child table serve two possible
+parent types without denormalising the validation-run/result shape
+twice. `app/validation_engine.py` needed zero code changes to support
+this — it always populates `requirement_id` and never touches
+`acceptance_criterion_id`, so requirement validation's behaviour is
+provably unaffected by the schema widening.
+
+### What I rejected, and why it lost
+
+A parallel `acceptance_criteria_validation_runs` /
+`acceptance_criteria_validation_results` table pair (mirroring
+`validation_runs`/`validation_results` exactly but for the new entity)
+was the alternative. It lost because it's exactly the "second
+validation subsystem" the module was explicitly scoped to avoid — it
+would have duplicated the run/result shape, the PASS/WARN/FAIL
+vocabulary, and the `UNIQUE(validation_run_id, rule_id)` safeguard for
+no structural benefit, at the cost of two more tables and a second
+codepath for anything (like a future audit report) that wants "all
+validation activity" in one place.
+
+### What I'd do differently at production scale
+
+If a third or fourth entity ever needed deterministic validation, a
+literal `(requirement_id, acceptance_criterion_id, ...)` column per
+entity type stops scaling cleanly. At that point a single polymorphic
+`(parent_type, parent_id)` pair — trading away individual foreign-key
+enforcement for a lookup-table or application-level integrity check —
+would likely be the better trade, but for exactly two entity types the
+explicit dual-FK is more honest and lets the database keep enforcing
+referential integrity directly.
+
+---
+
+## 2026-08-23 — Acceptance-criteria live/replay mode is tracked per-record, not per-run
+
+### The decision
+
+`extracted_acceptance_criteria` carries its own `mode`
+(`'live'`/`'replay'`) and self-referential `replayed_from_id` columns,
+with the same same-row `CHECK` pairing pattern `extraction_runs` uses.
+There is no `acceptance_criteria_runs` or equivalent batch/run table.
+
+### Why
+
+Module 1's replay tracking lives on `extraction_runs` because one live
+extraction call can produce many candidate requirements sharing one
+run. Acceptance-criteria drafting has no batch concept — one live
+request drafts exactly one criterion — so there is nothing for a
+separate run table to group. Putting `mode`/`replayed_from_id` directly
+on `extracted_acceptance_criteria` is the minimal structure that still
+lets every criterion answer "was this a live AI call or a replay, and
+if a replay, of what" on its own, without inventing a table that would
+only ever have a 1:1 relationship with the rows it "batches."
+
+### What I rejected, and why it lost
+
+Adding an `acceptance_criteria_runs` table mirroring `extraction_runs`
+exactly was considered, purely for structural symmetry with Module 1.
+It lost because a run table whose every row groups exactly one child
+row is not doing any grouping — it would be pure overhead copied from
+a pattern that solved a problem (one-call-many-candidates) this
+module doesn't have.
+
+### What I'd do differently at production scale
+
+If a future capability legitimately let one live request draft several
+candidate criteria at once (batch drafting), the run-table pattern
+would become the right structure again, and this per-record approach
+would need a real migration rather than a graceful extension — that
+asymmetry is the main cost of choosing the leaner structure now.

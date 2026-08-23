@@ -74,7 +74,8 @@ class ValidationResultOut(BaseModel):
 
 class ValidationRunOut(BaseModel):
     id: int
-    requirement_id: int
+    requirement_id: int | None = None
+    acceptance_criterion_id: int | None = None
     validator_version: str
     run_at: datetime
     results: list[ValidationResultOut]
@@ -126,3 +127,80 @@ class RequirementReviewResponse(BaseModel):
     extracted_evidence: ExtractedEvidenceOut | None
     latest_validation: ValidationRunOut | None
     edit_history: list[RequirementEditOut]
+
+
+class AcceptanceCriteriaOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    source_extraction_id: int
+    current_text: str
+    validation_state: str
+    review_status: str
+    warn_acknowledged_at: datetime | None
+    warn_acknowledged_by: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ExtractedAcceptanceCriterionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    requirement_id: int
+    criterion_text: str
+    mode: str
+    replayed_from_id: int | None
+    model_name: str
+    prompt_version: str
+    created_at: datetime
+    acceptance_criteria: list[AcceptanceCriteriaOut] = Field(default_factory=list)
+
+
+class AcceptanceCriteriaPatchRequest(BaseModel):
+    current_text: str = Field(
+        min_length=1, description="The analyst's edited acceptance criterion text."
+    )
+
+
+class AcceptanceCriteriaApproveRequest(BaseModel):
+    acknowledge_warning: bool = Field(
+        default=False,
+        description=(
+            "Must be explicitly true to approve an acceptance criterion whose "
+            "latest validation_state is 'warn'. Never inferred from calling "
+            "this endpoint."
+        ),
+    )
+
+
+class AcceptanceCriterionEditOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    previous_text: str
+    new_text: str
+    edited_by: str | None
+    edited_at: datetime
+
+
+class AcceptanceCriterionProvenanceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    requirement_id: int
+    criterion_text: str
+    mode: str
+    replayed_from_id: int | None
+    model_name: str
+    prompt_version: str
+    created_at: datetime
+
+
+class AcceptanceCriteriaReviewResponse(BaseModel):
+    acceptance_criterion: AcceptanceCriteriaOut
+    provenance: AcceptanceCriterionProvenanceOut
+    parent_requirement: RequirementOut
+    extracted_evidence: ExtractedEvidenceOut | None
+    latest_validation: ValidationRunOut | None
+    edit_history: list[AcceptanceCriterionEditOut]

@@ -4,6 +4,10 @@ Interview-preparation notes for Module 1 of the AI Requirements &
 Traceability Workbench. Covers everything built through Milestone 6
 (Replay Mode).
 
+Module 2 (the Acceptance Criteria Assistant) has its own notes in
+`module2-notes.md` — this file remains the historical record of
+Module 1 only.
+
 ## What Module 1 does
 
 Module 1 takes messy, unstructured stakeholder text (meeting notes, an

@@ -209,6 +209,8 @@ def render_requirement_card(requirement_id: int) -> None:
 
         render_review_controls(requirement, review["edit_history"])
 
+        render_acceptance_criteria_section(requirement_id)
+
 
 def render_review_controls(requirement: dict, edit_history: list[dict]) -> None:
     requirement_id = requirement["id"]
@@ -284,6 +286,200 @@ def _approve(requirement_id: int, acknowledge_warning: bool) -> None:
         st.rerun()
     except APIClientError as exc:
         st.error(f"Could not approve the requirement. {exc}")
+
+
+def render_acceptance_criteria_section(requirement_id: int) -> None:
+    st.markdown("**📋 Acceptance criteria**")
+    st.caption(
+        "AI-drafted Given/When/Then criteria for this requirement, checked "
+        "by four independent structural rules, and reviewed separately from "
+        "the requirement itself — approving or rejecting one never changes "
+        "the requirement's own review status."
+    )
+
+    if st.button("Draft Acceptance Criteria", key=f"draft_ac_btn_{requirement_id}"):
+        try:
+            with st.spinner("Drafting acceptance criterion..."):
+                api_client.draft_acceptance_criteria(requirement_id)
+            st.rerun()
+        except APIClientError as exc:
+            st.error(f"Could not draft acceptance criteria. {exc}")
+
+    try:
+        criteria = api_client.list_acceptance_criteria(requirement_id)
+    except APIClientError as exc:
+        st.error(f"Could not load acceptance criteria. {exc}")
+        return
+
+    if not criteria:
+        st.caption("No acceptance criteria drafted yet.")
+        return
+
+    # Populated while rendering each criterion below, from that criterion's
+    # own provenance - only live-mode drafts belonging to this requirement
+    # are ever offered for replay, and a replay is never offered as a
+    # replay source itself.
+    live_extracted_options: dict[str, int] = {}
+
+    for criterion in criteria:
+        render_acceptance_criterion_card(criterion["id"], live_extracted_options)
+
+    if live_extracted_options:
+        with st.expander("Replay a previous live draft"):
+            selected_label = st.selectbox(
+                "Choose a previous live draft to replay",
+                live_extracted_options.keys(),
+                key=f"ac_replay_select_{requirement_id}",
+            )
+            if st.button("Replay Selected Draft", key=f"ac_replay_btn_{requirement_id}"):
+                extracted_id = live_extracted_options[selected_label]
+                try:
+                    with st.spinner(
+                        "Replaying acceptance criterion (no live AI call)..."
+                    ):
+                        api_client.replay_acceptance_criteria(extracted_id)
+                    st.rerun()
+                except APIClientError as exc:
+                    st.error(f"Replay could not be completed. {exc}")
+
+
+def render_acceptance_criterion_card(
+    acceptance_criterion_id: int, live_extracted_options: dict[str, int]
+) -> None:
+    try:
+        review = api_client.get_acceptance_criteria_review(acceptance_criterion_id)
+    except APIClientError as exc:
+        st.error(f"Could not load acceptance criterion #{acceptance_criterion_id}. {exc}")
+        return
+
+    criterion = review["acceptance_criterion"]
+    provenance = review["provenance"]
+    validation = review["latest_validation"]
+
+    if provenance["mode"] == "live":
+        label = f"AC #{criterion['id']} — drafted {provenance['created_at']}"
+        live_extracted_options[label] = provenance["id"]
+
+    state_icon = VALIDATION_ICONS.get(criterion["validation_state"], "❔")
+    status_icon = REVIEW_ICONS.get(criterion["review_status"], "")
+    mode_label = "🔁 replayed" if provenance["mode"] == "replay" else "🤖 live draft"
+
+    with st.container(border=True):
+        st.markdown(
+            f"**Acceptance criterion #{criterion['id']}** ({mode_label}) &nbsp; "
+            f"{state_icon} `{criterion['validation_state'].upper()}` &nbsp; "
+            f"{status_icon} `{criterion['review_status'].upper()}`"
+        )
+
+        st.markdown("**🤖 AI-drafted criterion**")
+        st.write(criterion["current_text"])
+
+        st.markdown(
+            "**🔎 Deterministic structural validation** — checks for a "
+            "Given, When, and Then clause and a measurable Then condition; "
+            "not a claim of business correctness or QA-readiness"
+        )
+        if validation is None:
+            st.caption("Not yet validated.")
+        else:
+            for result in validation["results"]:
+                icon = VALIDATION_ICONS.get(result["result"], "❔")
+                with st.expander(
+                    f"{icon} {result['rule_code']} — {result['result'].upper()}"
+                ):
+                    st.write(result["message"])
+                    if result["recommended_action"]:
+                        st.caption(f"Recommended action: {result['recommended_action']}")
+
+        render_acceptance_criteria_review_controls(criterion, review["edit_history"])
+
+
+def render_acceptance_criteria_review_controls(
+    criterion: dict, edit_history: list[dict]
+) -> None:
+    acceptance_criterion_id = criterion["id"]
+    st.markdown("**🧑 Human review (acceptance criterion)**")
+
+    if edit_history:
+        with st.expander(f"Edit history ({len(edit_history)})"):
+            for edit in edit_history:
+                st.markdown(
+                    f"*{edit['edited_at']} — edited by {edit['edited_by'] or 'unknown'}*"
+                )
+                st.markdown(f"- Before: {edit['previous_text']}")
+                st.markdown(f"- After: {edit['new_text']}")
+                st.divider()
+
+    if criterion["review_status"] != "pending":
+        st.caption(
+            f"This acceptance criterion has already been "
+            f"{criterion['review_status']}. No further action available."
+        )
+        return
+
+    edit_key = f"editing_ac_{acceptance_criterion_id}"
+    edit_col, approve_col, reject_col = st.columns(3)
+
+    if edit_col.button("Edit", key=f"edit_ac_btn_{acceptance_criterion_id}"):
+        st.session_state[edit_key] = not st.session_state.get(edit_key, False)
+
+    if st.session_state.get(edit_key):
+        new_text = st.text_area(
+            "Edit acceptance criterion text",
+            value=criterion["current_text"],
+            key=f"edit_ac_text_{acceptance_criterion_id}",
+        )
+        if st.button("Save edit", key=f"save_ac_edit_{acceptance_criterion_id}"):
+            try:
+                api_client.patch_acceptance_criteria(acceptance_criterion_id, new_text)
+                st.session_state[edit_key] = False
+                st.success("Acceptance criterion updated and re-validated.")
+                st.rerun()
+            except APIClientError as exc:
+                st.error(f"Could not save the edit. {exc}")
+
+    validation_state = criterion["validation_state"]
+
+    if validation_state == "fail":
+        approve_col.button(
+            "Approve", key=f"approve_ac_btn_{acceptance_criterion_id}", disabled=True
+        )
+        approve_col.caption("Blocked: FAIL result cannot be approved.")
+    elif validation_state == "warn":
+        acknowledge = approve_col.checkbox(
+            "I have reviewed the warning; it does not block approval",
+            key=f"ack_ac_{acceptance_criterion_id}",
+        )
+        if approve_col.button(
+            "Approve",
+            key=f"approve_ac_btn_{acceptance_criterion_id}",
+            disabled=not acknowledge,
+        ):
+            _approve_acceptance_criterion(acceptance_criterion_id, acknowledge_warning=True)
+    else:
+        if approve_col.button("Approve", key=f"approve_ac_btn_{acceptance_criterion_id}"):
+            _approve_acceptance_criterion(acceptance_criterion_id, acknowledge_warning=False)
+
+    if reject_col.button("Reject", key=f"reject_ac_btn_{acceptance_criterion_id}"):
+        try:
+            api_client.reject_acceptance_criteria(acceptance_criterion_id)
+            st.success("Acceptance criterion rejected.")
+            st.rerun()
+        except APIClientError as exc:
+            st.error(f"Could not reject the acceptance criterion. {exc}")
+
+
+def _approve_acceptance_criterion(
+    acceptance_criterion_id: int, acknowledge_warning: bool
+) -> None:
+    try:
+        api_client.approve_acceptance_criteria(
+            acceptance_criterion_id, acknowledge_warning=acknowledge_warning
+        )
+        st.success("Acceptance criterion approved.")
+        st.rerun()
+    except APIClientError as exc:
+        st.error(f"Could not approve the acceptance criterion. {exc}")
 
 
 def main() -> None:

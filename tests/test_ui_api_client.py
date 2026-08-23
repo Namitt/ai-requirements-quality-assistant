@@ -202,6 +202,126 @@ def test_replay_extraction_sends_correct_request(monkeypatch):
     assert captured["url"].endswith("/extraction-runs/1/replay")
 
 
+def test_draft_acceptance_criteria_sends_correct_request(monkeypatch):
+    captured = {}
+
+    def fake_request(method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        return _FakeResponse(201, {"id": 1, "current_text": "Given...,when...,then..."})
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    result = api_client.draft_acceptance_criteria(5)
+
+    assert result == {"id": 1, "current_text": "Given...,when...,then..."}
+    assert captured["method"] == "POST"
+    assert captured["url"].endswith("/requirements/5/acceptance-criteria")
+
+
+def test_list_acceptance_criteria_sends_correct_request(monkeypatch):
+    captured = {}
+
+    def fake_request(method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        return _FakeResponse(200, [{"id": 1}])
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    result = api_client.list_acceptance_criteria(5)
+
+    assert result == [{"id": 1}]
+    assert captured["method"] == "GET"
+    assert captured["url"].endswith("/requirements/5/acceptance-criteria")
+
+
+def test_replay_acceptance_criteria_sends_correct_request(monkeypatch):
+    captured = {}
+
+    def fake_request(method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        return _FakeResponse(201, {"id": 2, "mode": "replay"})
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    result = api_client.replay_acceptance_criteria(1)
+
+    assert result == {"id": 2, "mode": "replay"}
+    assert captured["method"] == "POST"
+    assert captured["url"].endswith("/extracted-acceptance-criteria/1/replay")
+
+
+def test_get_acceptance_criteria_review_sends_correct_request(monkeypatch):
+    captured = {}
+
+    def fake_request(method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        return _FakeResponse(200, {"acceptance_criterion": {"id": 5}})
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    result = api_client.get_acceptance_criteria_review(5)
+
+    assert result == {"acceptance_criterion": {"id": 5}}
+    assert captured["method"] == "GET"
+    assert captured["url"].endswith("/acceptance-criteria/5/review")
+
+
+def test_patch_acceptance_criteria_sends_current_text(monkeypatch):
+    captured = {}
+
+    def fake_request(method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        return _FakeResponse(200, {"id": 5, "current_text": "New text"})
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    api_client.patch_acceptance_criteria(5, "New text")
+
+    assert captured["method"] == "PATCH"
+    assert captured["url"].endswith("/acceptance-criteria/5")
+    assert captured["json"] == {"current_text": "New text"}
+
+
+def test_approve_acceptance_criteria_sends_acknowledge_warning(monkeypatch):
+    captured = {}
+
+    def fake_request(method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        return _FakeResponse(200, {"id": 5, "review_status": "approved"})
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    api_client.approve_acceptance_criteria(5, acknowledge_warning=True)
+
+    assert captured["method"] == "POST"
+    assert captured["url"].endswith("/acceptance-criteria/5/approve")
+    assert captured["json"] == {"acknowledge_warning": True}
+
+
+def test_reject_acceptance_criteria_sends_correct_request(monkeypatch):
+    captured = {}
+
+    def fake_request(method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        return _FakeResponse(200, {"id": 5, "review_status": "rejected"})
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    api_client.reject_acceptance_criteria(5)
+
+    assert captured["method"] == "POST"
+    assert captured["url"].endswith("/acceptance-criteria/5/reject")
+
+
 def test_base_url_defaults_and_env_override(monkeypatch):
     monkeypatch.delenv("API_BASE_URL", raising=False)
     assert api_client._base_url() == api_client.DEFAULT_API_BASE_URL

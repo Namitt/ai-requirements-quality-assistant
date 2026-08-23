@@ -113,6 +113,9 @@ class Requirement(Base):
     validation_runs: Mapped[list["ValidationRun"]] = relationship(
         back_populates="requirement"
     )
+    extracted_acceptance_criteria: Mapped[list["ExtractedAcceptanceCriterion"]] = relationship(
+        back_populates="requirement"
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -175,15 +178,31 @@ class ValidationRun(Base):
     __tablename__ = "validation_runs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    requirement_id: Mapped[int] = mapped_column(
-        ForeignKey("requirements.id", ondelete="RESTRICT"), nullable=False
+    requirement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("requirements.id", ondelete="RESTRICT"), nullable=True
+    )
+    acceptance_criterion_id: Mapped[int | None] = mapped_column(
+        ForeignKey("acceptance_criteria.id", ondelete="RESTRICT"), nullable=True
     )
     validator_version: Mapped[str] = mapped_column(Text, nullable=False)
     run_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
 
-    requirement: Mapped["Requirement"] = relationship(back_populates="validation_runs")
+    requirement: Mapped["Requirement | None"] = relationship(
+        back_populates="validation_runs"
+    )
+    acceptance_criterion: Mapped["AcceptanceCriterion | None"] = relationship(
+        back_populates="validation_runs"
+    )
     results: Mapped[list["ValidationResult"]] = relationship(
         back_populates="validation_run"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "(requirement_id IS NOT NULL AND acceptance_criterion_id IS NULL) "
+            "OR (requirement_id IS NULL AND acceptance_criterion_id IS NOT NULL)",
+            name="ck_validation_runs_exactly_one_parent",
+        ),
     )
 
 
@@ -213,3 +232,105 @@ class ValidationResult(Base):
             "validation_run_id", "rule_id", name="uq_validation_results_run_rule"
         ),
     )
+
+
+class ExtractedAcceptanceCriterion(Base):
+    __tablename__ = "extracted_acceptance_criteria"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    requirement_id: Mapped[int] = mapped_column(
+        ForeignKey("requirements.id", ondelete="RESTRICT"), nullable=False
+    )
+    criterion_text: Mapped[str] = mapped_column(Text, nullable=False)
+    mode: Mapped[str] = mapped_column(Text, nullable=False)
+    replayed_from_id: Mapped[int | None] = mapped_column(
+        ForeignKey("extracted_acceptance_criteria.id", ondelete="RESTRICT"), nullable=True
+    )
+    model_name: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+
+    requirement: Mapped["Requirement"] = relationship(
+        back_populates="extracted_acceptance_criteria"
+    )
+    acceptance_criteria: Mapped[list["AcceptanceCriterion"]] = relationship(
+        back_populates="source_extraction"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "mode IN ('live','replay')", name="ck_extracted_acceptance_criteria_mode"
+        ),
+        CheckConstraint(
+            "(mode = 'live' AND replayed_from_id IS NULL) "
+            "OR (mode = 'replay' AND replayed_from_id IS NOT NULL)",
+            name="ck_extracted_acceptance_criteria_replay_pairing",
+        ),
+    )
+
+
+class AcceptanceCriterion(Base):
+    __tablename__ = "acceptance_criteria"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_extraction_id: Mapped[int] = mapped_column(
+        ForeignKey("extracted_acceptance_criteria.id", ondelete="RESTRICT"), nullable=False
+    )
+    current_text: Mapped[str] = mapped_column(Text, nullable=False)
+    validation_state: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'not_validated'")
+    )
+    review_status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'pending'")
+    )
+    warn_acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    warn_acknowledged_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utcnow, onupdate=_utcnow
+    )
+
+    source_extraction: Mapped["ExtractedAcceptanceCriterion"] = relationship(
+        back_populates="acceptance_criteria"
+    )
+    edits: Mapped[list["AcceptanceCriterionEdit"]] = relationship(
+        back_populates="acceptance_criterion"
+    )
+    validation_runs: Mapped[list["ValidationRun"]] = relationship(
+        back_populates="acceptance_criterion"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "validation_state IN ('not_validated','pass','warn','fail')",
+            name="ck_acceptance_criteria_validation_state",
+        ),
+        CheckConstraint(
+            "review_status IN ('pending','approved','rejected')",
+            name="ck_acceptance_criteria_review_status",
+        ),
+        CheckConstraint(
+            "review_status != 'approved' OR validation_state != 'fail'",
+            name="ck_acceptance_criteria_fail_blocks_approval",
+        ),
+        CheckConstraint(
+            "review_status != 'approved' OR validation_state != 'warn' "
+            "OR warn_acknowledged_at IS NOT NULL",
+            name="ck_acceptance_criteria_warn_requires_ack",
+        ),
+    )
+
+
+class AcceptanceCriterionEdit(Base):
+    __tablename__ = "acceptance_criteria_edits"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    acceptance_criterion_id: Mapped[int] = mapped_column(
+        ForeignKey("acceptance_criteria.id", ondelete="RESTRICT"), nullable=False
+    )
+    previous_text: Mapped[str] = mapped_column(Text, nullable=False)
+    new_text: Mapped[str] = mapped_column(Text, nullable=False)
+    edited_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    edited_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+
+    acceptance_criterion: Mapped["AcceptanceCriterion"] = relationship(back_populates="edits")

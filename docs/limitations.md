@@ -90,6 +90,36 @@ made to keep the project focused and interview-defensible.
   tool, not a deployed service, and has not been evaluated against
   production security requirements.
 
+## Module 2 (acceptance criteria) limitations
+
+- **Given/When/Then keyword presence is not a grammatical parse.** All
+  four acceptance-criteria rules check for the literal words "given",
+  "when", and "then" — a validly structured criterion phrased without
+  those exact words could still be flagged, and a criterion using those
+  words without genuinely having that clause would not be caught.
+- **No acceptance-criteria rule can produce FAIL in this version.** All
+  four are WARN-only, for the same reason four of the five requirement
+  rules are WARN-only: none measures something close to objective
+  detection the way `DUPLICATE_NEAR`'s similarity score does. The
+  FAIL-blocking enforcement exists and is tested, but is currently
+  unreachable through the rule set itself.
+- **A PASS structural result is not a claim of business correctness or
+  QA-readiness.** It means the four configured structural checks found
+  no problem — nothing more, on the same terms as requirement
+  validation's PASS.
+- **No acceptance criterion is ever checked against another.** Unlike
+  `DUPLICATE_NEAR` and `POSSIBLE_CONTRADICTION` for requirements, no
+  Module 2 rule compares criteria to each other; duplicate or
+  conflicting acceptance criteria are not detected.
+- **Every acceptance criterion is AI-origin.** There is no manually
+  authored acceptance criterion in this version, and therefore no
+  `origin` field on the `acceptance_criteria` table.
+- **Replay is scoped to a single requirement's own live drafts.** An
+  acceptance-criteria replay can only reproduce a live draft that
+  belongs to the same requirement it was originally drafted for, and a
+  replay can never itself be replayed — the same constraints Module 1's
+  replay mode applies to extraction runs.
+
 ## What this project is designed to demonstrate
 
 This section describes design intent, not a verified outcome. It will
