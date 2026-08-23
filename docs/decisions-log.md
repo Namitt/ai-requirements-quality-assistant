@@ -792,3 +792,61 @@ keywords) enforced upstream, or a real grammatical parse instead of
 regex heuristics, to close completely. Neither is justified for this
 project's scope; see `validation-rules.md`'s "Known limitations" for
 `AC_MEASURABLE_THEN`.
+
+---
+
+## 2026-08-23 — AC_MEASURABLE_THEN's scenario boundary must be clause-initial, not merely capitalised, and must recognise "When" as well as "Given"
+
+### The decision
+
+`_NEW_SCENARIO_RE` changed from `\bGiven\b` (any capitalised "Given",
+anywhere) to `(?:^|[,.!?])\s*(Given|When)\b` (a capitalised "Given" or
+"When" immediately after a comma, after sentence-ending punctuation, or
+at the very start of the Then clause's own text) — boundary position is
+taken from the captured keyword itself, not the preceding punctuation.
+
+### Why
+
+The previous entry's claim that the combined heuristic had "no new
+regressions found in either direction" was wrong on both counts, caught
+by a further independent review: (1) the bare `\bGiven\b` match had no
+positional anchor at all, so an ordinary capitalised term inside the
+Then clause's own prose (e.g. a "Given Name" form-field label) was
+mistaken for a new scenario and wrongly truncated the scan, producing a
+false WARN; (2) the boundary only ever checked for "Given", so a second
+scenario introduced by a capitalised "When" instead (e.g. "...then
+nothing happens, When the retry limit is hit, then...") was invisible
+to it, letting that second scenario's measurable evidence leak into the
+first Then clause's result — the exact false-positive class this rule
+exists to prevent, just reachable through a different keyword.
+Requiring the keyword to be clause-initial fixes (1); checking for
+"When" as an equal alternative to "Given" fixes (2). Both were
+necessary; neither alone would have closed both gaps.
+
+### What I rejected, and why it lost
+
+Reverting to the unanchored, Given-only boundary and simply documenting
+the two new failure modes as further residual limitations was
+considered, given how much churn this one rule has already had. It
+lost because the "When" gap in particular is not a rare, contrived
+construction — a second Given/When/Then scenario starting with "When"
+is exactly as plausible as one starting with "Given" — so leaving it
+unfixed would mean shipping a false-positive-producing rule under the
+banner of a commit specifically written to eliminate false positives.
+
+A full grammatical parse (rather than a clause-initial-punctuation
+heuristic) was also considered, to close the remaining lowercase
+run-on-sentence gap noted in the previous entry at the same time. It
+lost for the same reason it lost previously: disproportionate to this
+rule's scope, and the regex heuristic now covers every case this
+project's test suite and two rounds of independent review have
+actually surfaced.
+
+### What I'd do differently at production scale
+
+This rule has now been corrected twice based on adversarial review
+rather than getting the heuristic right up front. At production scale,
+a property-based or fuzz-style test generating varied Given/When/Then
+phrasings (capitalisation, punctuation, keyword choice) would likely
+have surfaced both gaps before merge, rather than requiring two
+separate rounds of manual review to find them one at a time.

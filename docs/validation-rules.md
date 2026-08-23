@@ -444,25 +444,32 @@ in isolation.
   measurable or testable condition.
 - **Checked:** The text between the first occurrence of "then" and
   whichever comes first — the end of that sentence, or the start of a
-  new, capitalised, sentence-initial "Given" (a second structural
-  Given/When/Then group) — for a number-plus-unit pattern, a
-  comparison/threshold phrase, or a conditional connector — the exact
-  same regex signals already used by `MISSING_ACCEPTANCE_CONDITION`
-  (see above), reused rather than reimplemented. A sentence boundary is
-  any of `.`/`!`/`?` that is not immediately adjacent to a digit (so a
-  decimal value like "2.5 seconds" is never split at its own decimal
-  point). This two-part boundary is deliberate: a plain "next Given/When"
-  word match (an earlier version of this rule) would also cut the scan
-  off at an ordinary, lowercase use of "when" or "given" inside the
+  new structural Given/When/Then group — for a number-plus-unit
+  pattern, a comparison/threshold phrase, or a conditional connector —
+  the exact same regex signals already used by
+  `MISSING_ACCEPTANCE_CONDITION` (see above), reused rather than
+  reimplemented. A sentence boundary is any of `.`/`!`/`?` that is not
+  immediately adjacent to a digit (so a decimal value like "2.5
+  seconds" is never split at its own decimal point). A new scenario is
+  recognised by a capitalised "Given" or "When" that is
+  *clause-initial* — immediately after a comma, immediately after
+  sentence-ending punctuation, or at the very start of the text
+  following "then" — never by the bare word appearing anywhere. This
+  two-part boundary is deliberate and has gone through two rounds of
+  correction: a plain "next Given/When" word match (an earlier version)
+  cut the scan off at an ordinary lowercase "when"/"given" inside the
   Then clause's own genuine outcome text (e.g. "...locked when 5
   attempts occur...", "...shall be given a discount of at least
-  10%..."), producing a false WARN on a criterion that is actually
-  measurable. Requiring the capitalised, sentence-initial form for the
-  Given/When boundary — and otherwise relying on the sentence
-  boundary — distinguishes a genuine second scenario from an ordinary
-  word inside the first Then clause. If no "then" is found at all, this
-  rule reports WARN independently of `AC_THEN_PRESENT` — the two are
-  separate structural facts and are never merged into one finding.
+  10%..."); a subsequent Given-only, unanchored version then matched
+  any capitalised "Given" appearing anywhere in the text, including as
+  an ordinary word inside the Then clause itself (e.g. a "Given Name"
+  form-field label), and separately never recognised a genuine second
+  scenario introduced by "When" instead of "Given". Requiring both
+  capitalisation *and* clause-initial position, and checking for either
+  keyword, closes both gaps without reopening the original one. If no
+  "then" is found at all, this rule reports WARN independently of
+  `AC_THEN_PRESENT` — the two are separate structural facts and are
+  never merged into one finding.
 - **Confidence:** Medium — the same reasoning as
   `MISSING_ACCEPTANCE_CONDITION`, applied to the text after "then"
   rather than the whole requirement.
@@ -484,19 +491,23 @@ in isolation.
   group, or only in trailing prose after the first scenario, correctly
   does not count as evidence for the first Then clause — including
   when that second group is only comma-separated rather than a new
-  sentence, provided it is introduced by a capitalised "Given". The one
-  residual gap this leaves: a second scenario introduced with a
-  lowercase "given" and no sentence-ending punctuation before it (e.g.
-  "...then nothing happens, given C, when D, then the value is at
-  least 5.", all one run-on sentence with a lowercase "given") is not
-  recognised as a boundary and could still leak that second scenario's
-  measurable evidence into the first Then clause's result. This is
-  considered an acceptable residual limitation rather than a fix
-  target: it requires a specific, ungrammatical construction (a
-  missing sentence break combined with non-canonical lowercase
-  capitalisation) that is unlikely in practice, and further tightening
-  the heuristic risks reintroducing the opposite false-negative this
-  rule was just fixed to avoid.
+  sentence, whether it is introduced by a clause-initial capitalised
+  "Given" or "When". An ordinary capitalised word that happens to be
+  "Given" or "When" but is *not* clause-initial (e.g. a "Given Name"
+  form-field label inside the Then clause) is correctly left alone and
+  does not truncate the scan. The one residual gap this leaves: a
+  second scenario introduced with a *lowercase* "given"/"when" and no
+  sentence-ending punctuation or comma before it (e.g. "...then nothing
+  happens given C, when D, then the value is at least 5.", a run-on
+  sentence with no separating comma at all) is not recognised as a
+  boundary and could still leak that second scenario's measurable
+  evidence into the first Then clause's result. This is considered an
+  acceptable residual limitation rather than a fix target: it requires
+  a specific, ungrammatical construction (no punctuation separating two
+  clauses at all, combined with non-canonical lowercase capitalisation)
+  that is unlikely in practice, and further tightening the heuristic
+  risks reintroducing one of the false-negatives this rule has already
+  been corrected for twice.
 
 ### Approval gating (acceptance criteria)
 

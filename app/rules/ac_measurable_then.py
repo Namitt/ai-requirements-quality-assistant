@@ -12,16 +12,23 @@ from app.rules.missing_acceptance_condition import (
 _THEN_RE = re.compile(r"\bthen\b", re.IGNORECASE)
 
 # The Then clause ends at whichever comes first: the end of its sentence, or
-# the start of a new structural Given/When/Then group. Only a capitalised,
-# sentence-initial "Given" is treated as a new group - ordinary lowercase
+# the start of a new structural Given/When/Then group. A capitalised
+# "Given"/"When" only counts as a new group when it is structurally
+# clause-initial - immediately after a comma, after sentence-ending
+# punctuation, or at the very start of the text following "then" - not
+# merely capitalised and present anywhere. This is what keeps an ordinary
+# capitalised term inside the Then clause's own prose (e.g. "the Given Name
+# field...") from being mistaken for a new scenario, while still catching a
+# genuine second scenario whether it is introduced by "Given" or "When" and
+# whether or not a full stop separates it from the first. Ordinary lowercase
 # "given"/"when" inside the Then clause's own prose (e.g. "...shall be given
-# a discount...", "...locked when 5 attempts occur...") are not scenario
-# boundaries and must stay inside the scanned segment. Sentence-ending
-# punctuation excludes a decimal point (e.g. "2.5 seconds") via the
-# lookaround assertions, so a measurable value straddling a "." is never
-# split in half.
+# a discount...", "...locked when 5 attempts occur...") are never scenario
+# boundaries regardless of position, since only the capitalised form is
+# checked at all. Sentence-ending punctuation excludes a decimal point (e.g.
+# "2.5 seconds") via the lookaround assertions, so a measurable value
+# straddling a "." is never split in half.
 _SENTENCE_END_RE = re.compile(r"(?<!\d)[.!?](?!\d)")
-_NEW_SCENARIO_RE = re.compile(r"\bGiven\b")
+_NEW_SCENARIO_RE = re.compile(r"(?:^|[,.!?])\s*(Given|When)\b")
 
 
 def evaluate(text: str) -> RuleOutcome:
@@ -39,11 +46,13 @@ def evaluate(text: str) -> RuleOutcome:
         )
 
     remainder = text[match.end() :]
+    sentence_end = _SENTENCE_END_RE.search(remainder)
+    new_scenario = _NEW_SCENARIO_RE.search(remainder)
     boundaries = [
-        m.start()
-        for m in (_SENTENCE_END_RE.search(remainder), _NEW_SCENARIO_RE.search(remainder))
-        if m is not None
+        sentence_end.start() if sentence_end else None,
+        new_scenario.start(1) if new_scenario else None,
     ]
+    boundaries = [b for b in boundaries if b is not None]
     then_segment = remainder[: min(boundaries)] if boundaries else remainder
     has_signal = bool(
         NUMBER_UNIT_PATTERN.search(then_segment)

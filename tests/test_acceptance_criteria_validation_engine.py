@@ -226,6 +226,38 @@ def test_measurable_then_decimal_number_is_not_split_at_its_own_period():
     assert ac_measurable_then.evaluate(text).result == "pass"
 
 
+def test_measurable_then_capitalised_when_bounds_a_second_scenario():
+    # A second scenario introduced by a capitalised "When" (not "Given") is
+    # just as structurally genuine as one introduced by "Given" and must be
+    # excluded the same way, even without an intervening full stop.
+    text = (
+        "Given A, when B, then nothing happens, When the retry limit is "
+        "hit, then the account is locked within 5 seconds."
+    )
+    assert ac_measurable_then.evaluate(text).result == "warn"
+
+
+def test_measurable_then_capitalised_when_bounds_a_second_scenario_after_full_stop():
+    text = (
+        "Given A, when B, then nothing happens. When the retry limit is "
+        "hit, then the account is locked within 5 seconds."
+    )
+    assert ac_measurable_then.evaluate(text).result == "warn"
+
+
+def test_measurable_then_ordinary_capitalised_given_inside_then_clause_does_not_truncate():
+    # "Given Name" is ordinary domain text (a form-field label) sitting
+    # inside the first Then clause's own prose, not a new scenario - it is
+    # not preceded by a comma, a sentence break, or the start of the Then
+    # clause, so it must not be mistaken for a structural boundary.
+    text = (
+        "Given a form submission, when validation runs, then the Given "
+        "Name field shall contain at least 2 characters within 100 "
+        "milliseconds."
+    )
+    assert ac_measurable_then.evaluate(text).result == "pass"
+
+
 @pytest.mark.parametrize(
     "text",
     [FULL_VALID, NO_GIVEN, NO_WHEN, NO_THEN, THEN_NOT_MEASURABLE, ""],
