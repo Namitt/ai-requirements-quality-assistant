@@ -168,6 +168,40 @@ def test_validate_requirement_sends_correct_request(monkeypatch):
     assert captured["url"].endswith("/requirements/5/validate")
 
 
+def test_list_extraction_runs_sends_correct_request(monkeypatch):
+    captured = {}
+
+    def fake_request(method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        return _FakeResponse(200, [{"id": 1, "mode": "live"}])
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    result = api_client.list_extraction_runs()
+
+    assert result == [{"id": 1, "mode": "live"}]
+    assert captured["method"] == "GET"
+    assert captured["url"].endswith("/extraction-runs")
+
+
+def test_replay_extraction_sends_correct_request(monkeypatch):
+    captured = {}
+
+    def fake_request(method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        return _FakeResponse(201, {"id": 2, "mode": "replay"})
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    result = api_client.replay_extraction(1)
+
+    assert result == {"id": 2, "mode": "replay"}
+    assert captured["method"] == "POST"
+    assert captured["url"].endswith("/extraction-runs/1/replay")
+
+
 def test_base_url_defaults_and_env_override(monkeypatch):
     monkeypatch.delenv("API_BASE_URL", raising=False)
     assert api_client._base_url() == api_client.DEFAULT_API_BASE_URL

@@ -10,6 +10,7 @@ from app.extraction import (
     ExtractionParseError,
     SourceQuoteNotFoundError,
 )
+from app.extraction_engine import ReplaySourceNotFoundError, ReplaySourceNotLiveError
 from app.validation_engine import ValidationConfigurationError
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,16 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(SourceQuoteNotFoundError)
     async def handle_source_quote_not_found(request: Request, exc: SourceQuoteNotFoundError):
         return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+    # Replay was asked to reproduce a run that either doesn't exist, or
+    # isn't eligible to be replayed (already a replay, not a live run).
+    @app.exception_handler(ReplaySourceNotFoundError)
+    async def handle_replay_source_not_found(request: Request, exc: ReplaySourceNotFoundError):
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(ReplaySourceNotLiveError)
+    async def handle_replay_source_not_live(request: Request, exc: ReplaySourceNotLiveError):
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     # Genuine server-side misconfiguration (the validation rule catalog is
     # incomplete) - not the client's fault, not an upstream AI problem.

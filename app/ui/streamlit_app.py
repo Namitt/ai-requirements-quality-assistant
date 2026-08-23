@@ -82,6 +82,53 @@ def _run_extraction(raw_text: str, title: str | None) -> None:
     st.success(f"Extracted {len(requirement_ids)} candidate requirement(s).")
 
 
+def render_replay_section() -> None:
+    st.subheader("1b. Or, replay a previous extraction")
+    st.write(
+        "Re-run a past AI extraction's results through validation and review "
+        "again, without making a new live AI call — useful for demonstrating "
+        "the workflow without a network connection or API key."
+    )
+
+    try:
+        runs = api_client.list_extraction_runs()
+    except APIClientError as exc:
+        st.error(f"Could not load past extraction runs. {exc}")
+        st.divider()
+        return
+
+    # Only a live run can be replayed, and a replay can never itself be
+    # replayed - the backend enforces this too, but filtering here keeps the
+    # dropdown limited to choices that will actually succeed.
+    live_runs = [run for run in runs if run["mode"] == "live"]
+
+    if not live_runs:
+        st.caption("No live extraction runs are available to replay yet.")
+        st.divider()
+        return
+
+    options = {
+        f"Run #{run['id']} — {run['model_name']} — {run['run_at']}": run["id"]
+        for run in live_runs
+    }
+    selected_label = st.selectbox("Choose a live extraction run to replay", options.keys())
+
+    if st.button("Replay Selected Run"):
+        selected_id = options[selected_label]
+        try:
+            with st.spinner("Replaying extraction (no live AI call)..."):
+                replay_run = api_client.replay_extraction(selected_id)
+        except APIClientError as exc:
+            st.error(f"Replay could not be completed. {exc}")
+            st.divider()
+            return
+
+        st.session_state["extraction_run_id"] = replay_run["id"]
+        st.success(f"Replayed run #{selected_id} as new run #{replay_run['id']}.")
+
+    st.divider()
+
+
 def render_results_section() -> None:
     extraction_run_id = st.session_state.get("extraction_run_id")
     if extraction_run_id is None:
@@ -242,6 +289,7 @@ def _approve(requirement_id: int, acknowledge_warning: bool) -> None:
 def main() -> None:
     render_header()
     render_input_section()
+    render_replay_section()
     render_results_section()
 
 

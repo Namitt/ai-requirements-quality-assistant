@@ -1,8 +1,8 @@
 # Module 1 Notes — AI Requirements Analyst
 
 Interview-preparation notes for Module 1 of the AI Requirements &
-Traceability Workbench. Covers everything built through Milestone 5
-(Streamlit UI).
+Traceability Workbench. Covers everything built through Milestone 6
+(Replay Mode).
 
 ## What Module 1 does
 
@@ -183,6 +183,78 @@ since pixel/widget-level tests for a page this thin would add
 complexity without meaningfully increasing confidence. All 176
 pre-existing tests continue to pass unchanged — 187 total, 0 failures.
 
+## Replay mode (Milestone 6)
+
+### What replay does
+
+Replay re-runs a *previously captured* extraction — the same
+requirement text, the same source evidence, the same model and prompt
+version on record — through validation and human review again,
+without contacting the AI service a second time. It produces a brand
+new extraction run and a brand new set of requirements (fresh IDs,
+fresh review state), so it can be edited, approved, or rejected
+independently of the original, but it never re-asks the AI anything.
+
+### Why it exists
+
+The application needs to be demonstrable — in an interview, on a
+laptop with no internet, or with no API key configured — without that
+being a lesser or fake version of the product. Replay makes that
+possible honestly: it's not a canned screenshot or a mocked response,
+it's the same database-backed pipeline every other requirement goes
+through, just fed from a prior AI result instead of a new one.
+
+### How it differs from a live extraction
+
+A live extraction calls the AI, gets a fresh answer, and stores that
+answer as a new immutable record. A replay never calls the AI at all —
+it copies the requirement text, the source quote, and the source
+span from an existing *live* run's records into new rows. The copy is
+only ever taken from a live run; a replay of a replay is rejected,
+so there's always exactly one AI-original record behind any replay,
+no matter how many times it's replayed.
+
+### Still goes through the same validation and review
+
+A replayed requirement is not treated as pre-approved or pre-checked.
+The moment its copy is created, it runs through the exact same
+deterministic validation engine as a live requirement, and it starts
+out `pending` in review status like any other requirement — it still
+needs a human to approve or reject it. In practice this also means a
+replay is a genuine, honest test of validation: in the demo scenario
+used for verification, a replayed requirement that duplicated another
+requirement already in that document was correctly flagged FAIL by
+the near-duplicate rule, exactly as it would be for a live extraction.
+
+### How it's exposed in the UI
+
+The Streamlit app gained one new control, "Replay a previous
+extraction," sitting alongside the existing paste-and-extract input.
+It lists live extraction runs to choose from and, on request, replays
+the selected one. From that point on, the replayed run's requirements
+appear in exactly the same requirement cards, with exactly the same
+edit/approve/reject controls, as a live extraction's results — no
+second review screen was built, because none was needed.
+
+### How it was tested
+
+19 new backend tests cover `run_replay()` directly: correct run
+metadata (mode, `replayed_from_run_id`, model/prompt version copied),
+exact copying of requirement text and source evidence with fresh
+database IDs, the original live run left completely untouched,
+automatic validation of every replayed requirement, rejection of a
+non-existent or already-replayed source run, and that no live
+extraction client is ever invoked — proved by running replay with no
+`ANTHROPIC_API_KEY` set at all. 6 new API tests cover the same
+behaviour through the HTTP layer (a new `GET /extraction-runs` listing
+endpoint and `POST /extraction-runs/{id}/replay`), and 2 new tests
+cover the UI's API client wrappers. All pre-existing tests continue to
+pass unchanged — 214 total, 0 failures. The Streamlit app was also
+smoke-tested against a real running backend with a real (fake-client)
+live extraction seeded into the database, including actually calling
+the replay endpoint end-to-end and confirming the deterministic
+validator correctly flagged the resulting duplicate.
+
 ## How I would explain Module 1 in an interview
 
 "I built a workflow where AI drafts requirements from messy notes, but
@@ -197,3 +269,11 @@ keeps the old check result too, so you can always see what changed and
 why. The point I wanted to demonstrate is that AI accelerates the
 drafting work, but a person — backed by consistent, explainable rules
 — still owns the decision."
+
+"I also added a replay mode so I can demonstrate the whole pipeline
+without needing a live AI call in the room — it re-runs a previously
+captured extraction through the same validation and review steps,
+which matters for an offline demo but also, more importantly, proves
+the deterministic checks aren't just decoration around the AI call —
+they're a real, independent layer that runs the same way every time,
+regardless of where the requirement text came from."

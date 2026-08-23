@@ -266,3 +266,90 @@ def test_missing_extraction_run_returns_404(client):
 def test_missing_extracted_requirement_returns_404(client):
     response = client.get("/extracted-requirements/999999")
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# listing extraction runs
+# ---------------------------------------------------------------------------
+
+
+def test_list_extraction_runs_returns_all_runs(client):
+    _override_extraction_client(FakeExtractionClient({"requirements": []}))
+    client.post("/extractions", json={"raw_text": SOURCE_TEXT})
+    client.post("/extractions", json={"raw_text": SOURCE_TEXT})
+
+    response = client.get("/extraction-runs")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 2
+    assert all(run["mode"] == "live" for run in body)
+    assert all("raw_response" not in run for run in body)
+
+
+def test_list_extraction_runs_empty_when_none_exist(client):
+    response = client.get("/extraction-runs")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+# ---------------------------------------------------------------------------
+# replay
+# ---------------------------------------------------------------------------
+
+
+def test_replay_endpoint_creates_replay_run(client):
+    _override_extraction_client(
+        FakeExtractionClient(
+            {
+                "requirements": [
+                    {
+                        "requirement_text": "The system shall lock a user account after 5 failed login attempts.",
+                        "source_quote": "the system shall lock a user account after 5 failed login attempts",
+                    }
+                ]
+            }
+        )
+    )
+    live_run = client.post("/extractions", json={"raw_text": SOURCE_TEXT}).json()
+
+    response = client.post(f"/extraction-runs/{live_run['id']}/replay")
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["mode"] == "replay"
+    assert body["replayed_from_run_id"] == live_run["id"]
+    assert "raw_response" not in body
+    assert len(body["extracted_requirements"]) == 1
+    assert (
+        body["extracted_requirements"][0]["requirement_text"]
+        == live_run["extracted_requirements"][0]["requirement_text"]
+    )
+
+
+def test_replay_endpoint_does_not_call_extraction_client(client):
+    _override_extraction_client(FakeExtractionClient({"requirements": []}))
+    live_run = client.post("/extractions", json={"raw_text": SOURCE_TEXT}).json()
+
+    # Swap in a client that raises if it is ever called - replay must never
+    # reach the extraction client.
+    _override_extraction_client(RaisingExtractionClient())
+
+    response = client.post(f"/extraction-runs/{live_run['id']}/replay")
+
+    assert response.status_code == 201
+
+
+def test_replay_endpoint_missing_source_run_returns_404(client):
+    response = client.post("/extraction-runs/999999/replay")
+    assert response.status_code == 404
+
+
+def test_replay_endpoint_replay_of_replay_returns_409(client):
+    _override_extraction_client(FakeExtractionClient({"requirements": []}))
+    live_run = client.post("/extractions", json={"raw_text": SOURCE_TEXT}).json()
+    replay_run = client.post(f"/extraction-runs/{live_run['id']}/replay").json()
+
+    response = client.post(f"/extraction-runs/{replay_run['id']}/replay")
+
+    assert response.status_code == 409
