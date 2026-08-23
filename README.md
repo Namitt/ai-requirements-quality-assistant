@@ -1,11 +1,20 @@
 # AI Requirements & Traceability Workbench
 
-A portfolio project demonstrating a deliberate three-stage workflow for
-software requirements: **AI drafts → deterministic rules validate →
-a human decides.** The AI never validates or approves anything; a
-fixed, inspectable set of rules is the sole authority on structural
-quality, and every approval/rejection decision is made and recorded by
-a human analyst.
+Turning a messy stakeholder note into an approved, traceable
+requirement is a real bottleneck in requirements engineering: AI can
+draft candidate requirements fast, but drafts alone aren't
+requirements — someone still has to check them for quality and decide
+what's fit to move into delivery. This project demonstrates one
+opinionated answer: **AI drafts → deterministic rules validate → a
+human decides**, with every step recorded so any approved requirement
+can be traced straight back to the source text and the decision that
+approved it.
+
+The AI never validates or approves anything. A fixed, inspectable set
+of rules is the sole authority on structural quality, and every
+approval/rejection decision is made and recorded by a human analyst —
+what makes this interesting isn't the AI call, it's the governance
+built around it.
 
 Two modules exist on top of the same pattern:
 
@@ -20,7 +29,53 @@ Two modules exist on top of the same pattern:
 
 See `docs/architecture.md`, `docs/decisions-log.md`, and
 `docs/validation-rules.md` for the full design rationale — this README
-covers only what's needed to set the project up and run it.
+covers what's needed to understand, run, and demo the project.
+
+## Demo
+
+The end-to-end workflow, in order:
+
+```
+raw stakeholder text
+      │
+      ▼
+AI drafts candidate requirements  (Module 1: extraction)
+      │
+      ▼
+deterministic rules validate      PASS / WARN / FAIL, each with a reason
+      │
+      ▼
+analyst reviews, edits if needed, and re-validates
+      │
+      ▼
+analyst approves or rejects       WARN needs an explicit acknowledgement;
+      │                           FAIL blocks approval outright
+      ▼
+traceable, auditable outcome      → back to the exact source sentence,
+                                     the AI output, and who decided what
+      │
+      ▼ (optional, per requirement)
+AI drafts a Given/When/Then acceptance criterion (Module 2) → the same
+validate → review → approve/reject lifecycle, independent of the
+requirement's own status
+```
+
+**To see it yourself:** start the API and UI (below), then in the
+Streamlit app click **"Load Demo Scenario"** — this loads a short,
+deliberately-constructed stakeholder note (`app/ui/demo_fixture.py`)
+designed to produce one clean requirement, one ambiguous one, and one
+near-duplicate pair, so a single extraction naturally shows a PASS, a
+WARN, and a FAIL side by side. `docs/demo-script.md` walks through a
+scripted five-minute presentation of it, including what to say at each
+step and the fallback if you don't have API access at demo time.
+
+Live extraction needs an `ANTHROPIC_API_KEY` (see below). Without one,
+you can still explore the rest of the workflow — validation, editing,
+review, approval, traceability — against any requirement already in
+the database, and replay mode can re-run a *previously captured* live
+extraction with no further API calls (it needs at least one live run
+to already exist, so it isn't a cold-start option on a brand-new,
+never-extracted-from database).
 
 ## Architecture / components
 
@@ -187,6 +242,43 @@ There is no Docker/container configuration, no CI pipeline, and no
 production ASGI process configuration beyond the bare `uvicorn`
 command above — see `docs/limitations.md`'s "Scope limitations" for
 the complete, deliberate list of what was left out and why.
+
+## Portfolio relevance
+
+This project exists to show how these skills come together in one
+working system, not just to name them:
+
+- **Requirements elicitation and structuring** — turning unstructured
+  stakeholder text (`docs/demo-script.md`'s call-notes fixture) into
+  discrete, individually reviewable requirement statements.
+- **Requirements quality and validation** — five fixed, explainable
+  rules (`docs/validation-rules.md`) catching ambiguity, missing
+  acceptance conditions, missing actors, near-duplicates, and possible
+  contradictions, each with a stated confidence level and
+  false-positive/negative profile rather than an unqualified "good" or
+  "bad."
+- **Business rules and workflow/state management** — an explicit
+  `pending → approved/rejected` state machine with WARN
+  acknowledgement and FAIL blocking enforced at both the application
+  and database layer (`docs/decisions-log.md`), not left as convention.
+- **Traceability and auditability** — every approved requirement (and
+  every acceptance criterion) resolves back to the exact AI output and
+  source-text span it came from, plus a full edit history.
+- **Data modelling** — a relational schema (`app/models.py`,
+  `alembic/versions/`) with `origin`, `validation_state`, and
+  `review_status` kept as independent, orthogonal facts rather than one
+  overloaded status field, and `CHECK` constraints enforcing the
+  approval rules the application layer already enforces.
+- **AI governance / human-in-the-loop design** — the recurring
+  architectural constraint across both modules: AI drafts, it never
+  validates or approves, and every approval decision is a recorded
+  human action. `docs/decisions-log.md` documents where this was
+  actually tested (e.g. rejecting a "safely reopen on re-validate"
+  design in favour of an explicit human decision).
+- **Process design under real constraints** — `docs/limitations.md`
+  and `docs/decisions-log.md` record what was deliberately cut (no
+  FAIL override, no multi-user access, no delivery-tool integration)
+  and why, rather than leaving scope boundaries implicit.
 
 ## Dependency locking
 

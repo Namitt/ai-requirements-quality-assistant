@@ -61,10 +61,14 @@ re-validation → human approval → traceability/audit.
    to resolve the duplicate live.
 7. **(3:10) Traceability.** Click from an approved requirement back to
    the exact source sentence it came from.
-8. **(3:40) Summary/audit view.** Show `origin`, `validation_state`,
-   and `review_status` across the set — how many were AI-original vs.
-   edited, how many required acknowledgement, and the one still
-   blocked on FAIL.
+8. **(3:40) Scroll back through the set.** Point out each card's own
+   `validation_state`/`review_status` badges as you scroll — how many
+   were approved directly, how many needed acknowledgement, and the
+   one still blocked on FAIL. (Note if asked: `GET /requirements`
+   already returns `origin`, `validation_state`, and `review_status`
+   for every requirement at once — enough to build a single
+   consolidated summary table — but that specific screen isn't built
+   in the UI yet, only per-card display.)
 9. **(4:20) One-line limitations note.** Name the weakest rule
    (possible contradiction) as a caveat, to show the limitations are
    known, not hidden.

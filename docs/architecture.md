@@ -269,9 +269,11 @@ only store, for both live and replayed data.
 AI is used for exactly one function: extracting candidate requirements
 from source text. It never validates, never approves, and the system
 never presents AI output as though it has already been judged correct.
-`origin='ai_generated'` content is visually and structurally
-distinguishable from human-edited or manually authored content
-throughout the review and summary views.
+`origin` (`ai_generated` vs. `manual`) is recorded on every requirement
+and exposed via the API on every read; the current Streamlit UI does
+not yet render a distinct visual treatment for it (see
+`requirements.md`'s FR10 for the same gap regarding a consolidated
+summary/audit view).
 
 ---
 

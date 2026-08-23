@@ -1,7 +1,7 @@
 [project]
 name = "ai-requirements-quality-assistant"
 version = "0.1.0"
-description = "Database layer for the AI Requirements Quality Assistant portfolio project"
+description = "AI-assisted requirements extraction and acceptance-criteria drafting, gated by deterministic validation and human review — a portfolio project"
 requires-python = ">=3.10"
 dependencies = [
     "sqlalchemy>=2.0,<3.0",
