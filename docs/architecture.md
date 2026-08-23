@@ -7,7 +7,7 @@
 | Backend | Python + FastAPI | REST API serving the frontend |
 | Database | SQLite | Single-file, relational, sufficient for single-user local scope |
 | Data access | SQLAlchemy | Explicit models, explicit foreign keys |
-| AI provider | Anthropic API | Used only for extraction, never for validation |
+| AI provider | Anthropic API (default) or Google Gemini Developer API, selected via `AI_PROVIDER` | Used only for extraction, never for validation |
 | Frontend | React + Vite | Deliberately small — this is a BA/DA project, not a frontend showcase |
 | Testing | pytest | Validator tested against a fixed reference fixture |
 
@@ -38,9 +38,14 @@ model calls.
 
 - **Ingestion** — accepts raw source text, stores it as a source
   document.
-- **Extraction** — either calls the Anthropic API (live mode) or
+- **Extraction** — either calls the configured AI provider (live mode
+  — Anthropic by default, or Gemini via `AI_PROVIDER=gemini`) or
   replays a previously captured result (replay mode); produces
-  immutable AI-output records paired with reviewable requirements.
+  immutable AI-output records paired with reviewable requirements. The
+  provider is selected once, centrally, behind the same
+  `ExtractionClient` interface (`app/extraction/client.py`) — nothing
+  downstream of that interface knows or needs to know which provider
+  drafted the text.
 - **Validation engine** — runs the five deterministic rules against
   requirement text and produces PASS/WARN/FAIL results, each with an
   explanation and a recommended action; runs automatically after
@@ -240,9 +245,10 @@ deleting a parent row. There is no user-facing deletion feature.
 ## Live vs. replay mode
 
 **Live:**
-`source_documents` → Anthropic API call → new `extraction_runs` row
-(`mode='live'`, `raw_response` stored) → `extracted_requirements` rows
-→ paired `requirements` rows → validation.
+`source_documents` → configured AI provider call (Anthropic or Gemini)
+→ new `extraction_runs` row (`mode='live'`, `raw_response` stored) →
+`extracted_requirements` rows → paired `requirements` rows →
+validation.
 
 **Replay:**
 An existing `extraction_runs` row (`mode='live'`) is selected → a new
@@ -275,17 +281,41 @@ not yet render a distinct visual treatment for it (see
 `requirements.md`'s FR10 for the same gap regarding a consolidated
 summary/audit view).
 
+This boundary is enforced by where the AI provider sits in the
+pipeline, not by convention:
+
+```
+AI provider (Anthropic or Gemini)
+    ↓
+ExtractionClient protocol      (app/extraction/client.py)
+    ↓
+provider-neutral ExtractionCallResult
+    ↓
+existing extraction/parsing pipeline
+    ↓
+deterministic validation        (app/validation_engine.py)
+    ↓
+human decision                  (approve / reject / acknowledge)
+```
+
+Everything below `ExtractionClient` — the parser, both engines, the
+validation engine, every API route and schema — operates on plain text
+and never imports or references either provider's SDK. Swapping which
+AI provider drafts the text (Anthropic ↔ Gemini) changes nothing about
+how that text is validated or approved, because validation never had
+any way to know which provider produced it in the first place.
+
 ---
 
 # Module 2 — Acceptance Criteria Assistant
 
 ## System components (additive)
 
-- **Acceptance-criteria drafting** — either calls the Anthropic API
-  (live mode, reusing the same `ExtractionClient` abstraction Module 1
-  uses) or replays a previously captured live draft (replay mode);
-  produces one immutable AI-output record paired with one reviewable
-  acceptance criterion.
+- **Acceptance-criteria drafting** — either calls the configured AI
+  provider (live mode, reusing the same `ExtractionClient` abstraction
+  and the same `AI_PROVIDER` selection Module 1 uses) or replays a
+  previously captured live draft (replay mode); produces one immutable
+  AI-output record paired with one reviewable acceptance criterion.
 - **Acceptance-criteria validation engine** — runs four deterministic
   structural rules against a criterion's text and produces PASS/WARN
   results (no v1 rule can produce FAIL), each with an explanation and a
@@ -398,9 +428,10 @@ lists instead of one.
 
 ## Live vs. replay mode (acceptance criteria)
 
-**Live:** a requirement's `current_text` → Anthropic API call (same
-`ExtractionClient` as Module 1) → new `extracted_acceptance_criteria`
-row (`mode='live'`) → paired `acceptance_criteria` row → validation.
+**Live:** a requirement's `current_text` → configured AI provider call
+(same `ExtractionClient` and `AI_PROVIDER` selection as Module 1) →
+new `extracted_acceptance_criteria` row (`mode='live'`) → paired
+`acceptance_criteria` row → validation.
 
 **Replay:** an existing `extracted_acceptance_criteria` row
 (`mode='live'`) is selected → a new row is created (`mode='replay'`,

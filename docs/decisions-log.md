@@ -925,3 +925,102 @@ check) under real load. If this project ever gained multiple
 contributors, CI, or deployment targets beyond a single developer's
 machine, the dependency-locking answer would likely flip toward a real
 lock-file tool with hash verification.
+
+---
+
+## 2026-08-23 — Google Gemini added as a second, optional AI provider behind the existing `ExtractionClient` interface
+
+### The decision
+
+`AI_PROVIDER` (env var; `anthropic` if unset, or `gemini`) selects
+which AI provider drafts live extractions and acceptance criteria.
+`GeminiExtractionClient` (`app/extraction/gemini_client.py`) implements
+the same `ExtractionClient` protocol `AnthropicExtractionClient`
+already did — `model_name: str` plus `complete(prompt) ->
+ExtractionCallResult` — using the Gemini Developer API (a Google AI
+Studio key, not Vertex AI). Provider selection lives in exactly one
+place, `app/api/deps.py::get_extraction_client`; no other module
+branches on `AI_PROVIDER`, and nothing downstream of `ExtractionClient`
+(the parsers, both engines, the validation engine, any route or
+schema) changed at all or needed to.
+
+### Why
+
+Module 1 and Module 2's engines already only ever call
+`client.complete(prompt)` and read `client.model_name` — they were
+never coupled to Anthropic specifically, just to the one concrete
+class that existed. Adding a second implementation of an
+already-correct interface, rather than redesigning anything, was the
+entire task. Anthropic remains the default specifically so existing
+deployments and every existing test that doesn't explicitly opt into
+Gemini keep behaving exactly as before with zero configuration change.
+Validation and replay are unaffected by construction, not by careful
+avoidance: validation only ever reads `current_text` already persisted
+in the database, and replay (`run_replay`,
+`replay_acceptance_criteria`) never calls `client.complete()` at all —
+neither function has ever known or cared which provider, if any, was
+configured.
+
+A real, evidenced difference from `AnthropicExtractionClient`'s shape
+was found during implementation, not assumed from it:
+`google.genai.Client(api_key=...)` validates its key eagerly and
+raises `ValueError` at construction time, whereas `anthropic.Anthropic(api_key=...)`
+defers that validation to the first real call. Constructing the real
+Gemini SDK client in `GeminiExtractionClient.__init__` would therefore
+have reintroduced the exact regression class the missing-`ANTHROPIC_API_KEY`
+fix (see the 2026-08-23 "Handle missing Anthropic API configuration
+explicitly" work) exists to prevent — a missing key failing as a side
+effect of FastAPI's dependency resolution, pre-empting request-body
+validation. `GeminiExtractionClient` instead stores the resolved key in
+`__init__` and defers constructing the real SDK client into
+`complete()`, after the same explicit `ExtractionAPIError`-on-missing-key
+check `AnthropicExtractionClient` already uses. A regression test
+(`tests/test_api_extraction.py::test_gemini_provider_malformed_request_returns_422_not_502`)
+proves a malformed request body still returns `422` even with
+`AI_PROVIDER=gemini` and no `GEMINI_API_KEY` configured at all.
+
+An unrecognised `AI_PROVIDER` value is treated differently from a
+missing API key on purpose: it is a deployment-time misconfiguration
+(a typo in an env var), not a per-request credential gap, so
+`get_extraction_client` raises immediately and clearly rather than
+deferring it — there is no real SDK object being constructed at that
+point to protect against, only a string comparison. It never silently
+falls back to `anthropic` or any other provider; a typo like
+`AI_PROVIDER=gemin` fails loudly by design instead of quietly running
+against the wrong (or no) provider.
+
+### What I rejected, and why it lost
+
+A generic multi-provider abstraction library (e.g. LiteLLM) was
+considered and rejected: this project already had exactly the
+right-shaped abstraction (`ExtractionClient`), and adopting a new
+dependency to re-solve an already-solved problem would be exactly the
+kind of unnecessary architectural churn this project's own conventions
+argue against elsewhere (see the dependency-locking entries above).
+
+Reading `AI_PROVIDER` (or any provider-specific check) inside the
+engines or routes, instead of centralising it in
+`get_extraction_client`, was rejected because it would scatter
+provider knowledge across the codebase for no benefit — every caller
+already only needs an `ExtractionClient`, never needs to know which
+one it got, and centralising the one branch that does care keeps that
+guarantee easy to verify by reading a single function.
+
+### Public deployment is explicitly future scope
+
+This work adds Gemini as a second **local, developer-configured**
+provider only. A public recruiter-facing demo (no API key required
+from the visitor) was explicitly discussed as a future goal but is
+**not** implemented here: it would need, at minimum, rate limiting
+scoped to the two AI-calling endpoints specifically, a server-side
+input-length cap, and a public-facing deployment target — none of
+which exist yet. Nothing in this change claims or assumes a public
+deployment exists.
+
+### What I'd do differently at production scale
+
+If a third provider were ever added, the same pattern holds, but a
+small provider-registry dict (`{"anthropic": AnthropicExtractionClient,
+"gemini": GeminiExtractionClient, ...}`) would be worth introducing in
+`get_extraction_client` once there are more than two branches to keep
+the dispatch function from growing into a long `if`/`elif` chain.

@@ -282,6 +282,37 @@ def test_missing_api_key_returns_502_with_actionable_message(client, monkeypatch
     assert "traceback" not in detail.lower()
 
 
+def test_gemini_provider_missing_api_key_returns_502_with_actionable_message(
+    client, monkeypatch
+):
+    # Same real-dependency-path proof as the Anthropic equivalent above,
+    # for the Gemini provider.
+    monkeypatch.setenv("AI_PROVIDER", "gemini")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    response = client.post("/extractions", json={"raw_text": SOURCE_TEXT})
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "GEMINI_API_KEY" in detail
+    assert "traceback" not in detail.lower()
+
+
+def test_gemini_provider_malformed_request_returns_422_not_502(client, monkeypatch):
+    # Regression guard: this project already had this exact class of bug
+    # with Anthropic (a missing-key check that ran at dependency
+    # construction time pre-empted request body validation, turning 422s
+    # into 502s). Gemini's key check must not repeat it: an invalid
+    # request body must still fail body validation first, even with
+    # AI_PROVIDER=gemini and no GEMINI_API_KEY configured at all.
+    monkeypatch.setenv("AI_PROVIDER", "gemini")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    response = client.post("/extractions", json={"raw_text": ""})
+
+    assert response.status_code == 422
+
+
 def test_extraction_api_error_mapped_to_502(client):
     _override_extraction_client(RaisingExtractionClient())
 

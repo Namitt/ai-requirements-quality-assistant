@@ -84,7 +84,7 @@ never-extracted-from database).
 | Backend | Python + FastAPI (`app/api/`, `app/main.py`) |
 | Database | SQLite, one file (`requirements_quality.db`) |
 | Data access | SQLAlchemy models (`app/models.py`) + Alembic migrations (`alembic/`) |
-| AI provider | Anthropic API, used only for drafting (extraction / acceptance criteria), never for validation |
+| AI provider | Anthropic API (default) or Google Gemini Developer API, selected via `AI_PROVIDER` (`app/api/deps.py`), used only for drafting (extraction / acceptance criteria), never for validation |
 | Analyst UI | Streamlit (`app/ui/streamlit_app.py`), calls the FastAPI backend over HTTP |
 | Validation | Deterministic rule modules (`app/rules/`), dispatched by `app/validation_engine.py` (requirements) and `app/acceptance_criteria_validation_engine.py` (acceptance criteria) |
 | Testing | pytest (`tests/`) |
@@ -96,10 +96,11 @@ codebase running in-process.
 ## Prerequisites
 
 - Python 3.10 or later (see `pyproject.toml`'s `requires-python`).
-- An Anthropic API key, **only** if you want to exercise live AI
-  drafting (extraction or acceptance-criteria generation). Everything
-  else — validation, review, approval, replay mode, the test suite —
-  works with no API key at all.
+- An API key for **one** AI provider — Anthropic (the default) or
+  Google Gemini — **only** if you want to exercise live AI drafting
+  (extraction or acceptance-criteria generation). Everything else —
+  validation, review, approval, replay mode, the test suite — works
+  with no API key at all, regardless of provider.
 
 ## Installation
 
@@ -122,17 +123,46 @@ pip install -r requirements-lock.txt
 
 # — or — install from the abstract version ranges instead:
 pip install "sqlalchemy>=2.0,<3.0" "alembic>=1.13,<2.0" "pytest>=8.0,<9.0" \
-            "anthropic>=0.40,<1.0" "fastapi>=0.110,<1.0" "uvicorn>=0.29,<1.0" \
-            "httpx>=0.27,<1.0" "streamlit>=1.35,<2.0"
+            "anthropic>=0.40,<1.0" "google-genai>=1.0,<3.0" "fastapi>=0.110,<1.0" \
+            "uvicorn>=0.29,<1.0" "httpx>=0.27,<1.0" "streamlit>=1.35,<2.0"
 ```
+
+Both AI provider SDKs (`anthropic` and `google-genai`) are installed by
+default so you can switch providers just by changing environment
+variables — you only need an API key for the one you actually use.
 
 ## Environment variables / configuration
 
+Which AI provider drafts extractions/acceptance-criteria is controlled
+by `AI_PROVIDER`. Only one provider is used per run; unset it and the
+application behaves exactly as it always has (Anthropic).
+
+```env
+AI_PROVIDER=anthropic
+ANTHROPIC_API_KEY=...
+```
+
+or
+
+```env
+AI_PROVIDER=gemini
+GEMINI_API_KEY=...
+```
+
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | Only for live AI drafting | — | Authenticates extraction / acceptance-criteria drafting calls. Not needed for validation, review, approval, replay mode, or the test suite. If it's missing when a live drafting call is attempted, the API returns a `502` naming exactly this variable, rather than a generic error. |
+| `AI_PROVIDER` | No | `anthropic` | Selects which AI provider drafts live extractions/acceptance-criteria (`anthropic` or `gemini`). An unrecognised value fails clearly with a `502` naming the bad value — it never silently falls back to a default. Provider selection is centralised in `app/api/deps.py::get_extraction_client`; nothing else in the application checks this variable. |
+| `ANTHROPIC_API_KEY` | Only when `AI_PROVIDER=anthropic` (the default) and you want live AI drafting | — | Authenticates extraction / acceptance-criteria drafting calls. Not needed for validation, review, approval, replay mode, or the test suite. If it's missing when a live drafting call is attempted, the API returns a `502` naming exactly this variable, rather than a generic error. |
 | `ANTHROPIC_MODEL` | No | `claude-sonnet-5` | Overrides which Anthropic model is used for drafting (`app/extraction/client.py`). |
+| `GEMINI_API_KEY` | Only when `AI_PROVIDER=gemini` and you want live AI drafting | — | Authenticates extraction / acceptance-criteria drafting calls against the Gemini Developer API (not Vertex AI). Same missing-key behaviour as `ANTHROPIC_API_KEY`: a clear `502` naming this variable, not a generic error. Get a free-tier key at [Google AI Studio](https://aistudio.google.com/apikey). |
+| `GEMINI_MODEL` | No | `gemini-3.5-flash` | Overrides which Gemini model is used for drafting (`app/extraction/gemini_client.py`). Google's model lineup moves quickly — verify current model availability at [ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models) if drafting fails with a model-not-found error. |
 | `API_BASE_URL` | No | `http://127.0.0.1:8000` | Tells the Streamlit UI (a separate process) where the FastAPI backend is listening (`app/ui/api_client.py`). |
+
+Whichever provider is selected, the API key is used **only server-side**
+by the FastAPI backend — it is never sent to, stored in, or exposed by
+the Streamlit UI or any API response. Replay mode never calls either
+provider's API at all, so it works identically regardless of
+`AI_PROVIDER` or whether any key is configured.
 
 The database location itself is **not** environment-configurable in
 this version — `app/db.py` hardcodes `sqlite:///requirements_quality.db`
