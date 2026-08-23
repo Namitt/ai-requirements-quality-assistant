@@ -267,6 +267,21 @@ def test_missing_raw_text_rejected_with_422(client):
 # ---------------------------------------------------------------------------
 
 
+def test_missing_api_key_returns_502_with_actionable_message(client, monkeypatch):
+    # Deliberately does not use _override_extraction_client - this exercises
+    # the real get_extraction_client() -> AnthropicExtractionClient() path,
+    # proving the fix end-to-end through actual FastAPI dependency
+    # resolution, not just the client class in isolation.
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    response = client.post("/extractions", json={"raw_text": SOURCE_TEXT})
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "ANTHROPIC_API_KEY" in detail
+    assert "traceback" not in detail.lower()
+
+
 def test_extraction_api_error_mapped_to_502(client):
     _override_extraction_client(RaisingExtractionClient())
 

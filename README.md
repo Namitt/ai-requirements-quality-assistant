@@ -130,7 +130,7 @@ pip install "sqlalchemy>=2.0,<3.0" "alembic>=1.13,<2.0" "pytest>=8.0,<9.0" \
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | Only for live AI drafting | — (read directly by the `anthropic` SDK) | Authenticates extraction / acceptance-criteria drafting calls. Not needed for validation, review, approval, replay mode, or the test suite. |
+| `ANTHROPIC_API_KEY` | Only for live AI drafting | — | Authenticates extraction / acceptance-criteria drafting calls. Not needed for validation, review, approval, replay mode, or the test suite. If it's missing when a live drafting call is attempted, the API returns a `502` naming exactly this variable, rather than a generic error. |
 | `ANTHROPIC_MODEL` | No | `claude-sonnet-5` | Overrides which Anthropic model is used for drafting (`app/extraction/client.py`). |
 | `API_BASE_URL` | No | `http://127.0.0.1:8000` | Tells the Streamlit UI (a separate process) where the FastAPI backend is listening (`app/ui/api_client.py`). |
 
