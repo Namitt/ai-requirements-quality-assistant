@@ -53,6 +53,10 @@ def list_extraction_runs() -> list[dict]:
     return _request("GET", "/extraction-runs")
 
 
+def get_requirements_summary() -> list[dict]:
+    return _request("GET", "/requirements/summary")
+
+
 def replay_extraction(extraction_run_id: int) -> dict:
     return _request("POST", f"/extraction-runs/{extraction_run_id}/replay")
 

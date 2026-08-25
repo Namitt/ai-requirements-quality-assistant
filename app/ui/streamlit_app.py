@@ -12,6 +12,10 @@ VALIDATION_ICONS = {"pass": "✅", "warn": "⚠️", "fail": "❌"}
 REVIEW_ICONS = {"pending": "🕒", "approved": "✅", "rejected": "🚫"}
 
 
+def _provenance_caption(model_name: str, mode: str) -> str:
+    return f"{model_name} · {'live' if mode == 'live' else 'replayed'}"
+
+
 def _load_demo_scenario() -> None:
     st.session_state["source_text_input"] = DEMO_SOURCE_TEXT
     st.session_state["title_input"] = DEMO_TITLE
@@ -159,10 +163,10 @@ def render_results_section() -> None:
     )
 
     for requirement_id in requirement_ids:
-        render_requirement_card(requirement_id)
+        render_requirement_card(requirement_id, run["model_name"], run["mode"])
 
 
-def render_requirement_card(requirement_id: int) -> None:
+def render_requirement_card(requirement_id: int, model_name: str, mode: str) -> None:
     try:
         review = api_client.get_requirement_review(requirement_id)
     except APIClientError as exc:
@@ -184,6 +188,7 @@ def render_requirement_card(requirement_id: int) -> None:
         )
 
         st.markdown("**🤖 AI-drafted requirement**")
+        st.caption(_provenance_caption(model_name, mode))
         st.write(requirement["current_text"])
 
         if evidence is not None:
@@ -372,6 +377,7 @@ def render_acceptance_criterion_card(
         )
 
         st.markdown("**🤖 AI-drafted criterion**")
+        st.caption(_provenance_caption(provenance["model_name"], provenance["mode"]))
         st.write(criterion["current_text"])
 
         st.markdown(
@@ -482,11 +488,129 @@ def _approve_acceptance_criterion(
         st.error(f"Could not approve the acceptance criterion. {exc}")
 
 
+def _source_document_label(row: dict) -> str:
+    if row["source_document_id"] is None:
+        return "—"
+    title = row["source_document_title"]
+    return title if title else f"Document #{row['source_document_id']}"
+
+
+def _summary_provenance_label(row: dict) -> str:
+    if row["model_name"] is None or row["mode"] is None:
+        return "—"
+    return _provenance_caption(row["model_name"], row["mode"])
+
+
+_VALIDATION_SORT_RANK = {"fail": 0, "warn": 1, "pass": 2, "not_validated": 3}
+_REVIEW_SORT_RANK = {"pending": 0, "approved": 1, "rejected": 2}
+
+
+def render_audit_summary_section() -> None:
+    st.subheader("Audit & Traceability Summary")
+    st.write(
+        "Every requirement drafted so far, across all source documents and "
+        "extraction runs — where each one currently stands, and what is "
+        "still blocking a human decision. AI drafts, deterministic rules "
+        "validate, a human decides — this view is a triage surface over "
+        "that pipeline, not a replacement for the detailed review above."
+    )
+
+    try:
+        summary = api_client.get_requirements_summary()
+    except APIClientError as exc:
+        st.error(f"Could not load the audit summary. {exc}")
+        return
+
+    if not summary:
+        st.info("No requirements have been extracted yet.")
+        return
+
+    filter_cols = st.columns(3)
+    review_options = ["All"] + sorted({row["review_status"] for row in summary})
+    validation_options = ["All"] + sorted({row["validation_state"] for row in summary})
+    document_options = ["All"] + sorted({_source_document_label(row) for row in summary})
+
+    review_filter = filter_cols[0].selectbox("Review status", review_options)
+    validation_filter = filter_cols[1].selectbox("Validation state", validation_options)
+    document_filter = filter_cols[2].selectbox("Source document", document_options)
+
+    sort_choice = st.selectbox(
+        "Sort by",
+        ["ID", "Validation state (worst first)", "Review status (pending first)"],
+    )
+
+    filtered = [
+        row
+        for row in summary
+        if (review_filter == "All" or row["review_status"] == review_filter)
+        and (validation_filter == "All" or row["validation_state"] == validation_filter)
+        and (document_filter == "All" or _source_document_label(row) == document_filter)
+    ]
+
+    if sort_choice == "Validation state (worst first)":
+        filtered.sort(key=lambda r: _VALIDATION_SORT_RANK.get(r["validation_state"], 99))
+    elif sort_choice == "Review status (pending first)":
+        filtered.sort(key=lambda r: _REVIEW_SORT_RANK.get(r["review_status"], 99))
+    else:
+        filtered.sort(key=lambda r: r["id"])
+
+    if not filtered:
+        st.caption("No requirements match the selected filters.")
+        return
+
+    table_rows = [
+        {
+            "ID": row["id"],
+            "Requirement": row["current_text"],
+            "Source document": _source_document_label(row),
+            "Origin": row["origin"],
+            "Model · mode": _summary_provenance_label(row),
+            "Validation": (
+                f"{VALIDATION_ICONS.get(row['validation_state'], '❔')} "
+                f"{row['validation_state'].upper()}"
+            ),
+            "Review": (
+                f"{REVIEW_ICONS.get(row['review_status'], '')} "
+                f"{row['review_status'].upper()}"
+            ),
+            "WARN acknowledged": (
+                "—"
+                if row["validation_state"] != "warn"
+                else ("Yes" if row["warn_acknowledged"] else "No")
+            ),
+            "AC count": row["acceptance_criteria_count"],
+        }
+        for row in filtered
+    ]
+    st.dataframe(table_rows, use_container_width=True, hide_index=True)
+
+    st.markdown("**Inspect a requirement**")
+    selectable_ids = [row["id"] for row in filtered]
+    selected_id = st.selectbox(
+        "Select a requirement ID to review in detail",
+        selectable_ids,
+        key="audit_summary_selected_requirement",
+    )
+    if selected_id is not None:
+        selected_row = next(row for row in filtered if row["id"] == selected_id)
+        render_requirement_card(
+            selected_id,
+            selected_row["model_name"] or "—",
+            selected_row["mode"] or "live",
+        )
+
+
 def main() -> None:
     render_header()
-    render_input_section()
-    render_replay_section()
-    render_results_section()
+    workflow_tab, audit_tab = st.tabs(["Workflow", "Audit & Traceability Summary"])
+
+    with workflow_tab:
+        render_input_section()
+        render_replay_section()
+        render_results_section()
+
+    with audit_tab:
+        render_audit_summary_section()
 
 
 main()

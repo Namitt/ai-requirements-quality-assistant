@@ -1024,3 +1024,74 @@ small provider-registry dict (`{"anthropic": AnthropicExtractionClient,
 "gemini": GeminiExtractionClient, ...}`) would be worth introducing in
 `get_extraction_client` once there are more than two branches to keep
 the dispatch function from growing into a long `if`/`elif` chain.
+
+---
+
+## 2026-08-24 — FR10 implemented as a purpose-built summary endpoint, not client-side aggregation
+
+### The decision
+
+`GET /requirements/summary` (`app/api/routes/requirements.py`) returns
+one flattened `RequirementSummaryOut` row per requirement — id, text,
+source document identity, origin, AI model/mode, validation state,
+review status, WARN-acknowledgement, and acceptance-criteria count —
+built from a single eager-loaded query (`selectinload` through
+`Requirement.source_extraction → extraction_run → source_document` and
+`Requirement.extracted_acceptance_criteria → acceptance_criteria`). The
+Streamlit "Audit & Traceability Summary" tab (`app/ui/streamlit_app.py`)
+renders it with review-status/validation-state/source-document filters
+and ID/validation-state/review-status sorting, and drills down into the
+existing, unmodified `render_requirement_card()` rather than a second
+detail view.
+
+### Why now
+
+FR10 (`docs/requirements.md`) had stood as the project's one explicitly
+self-flagged, unimplemented functional requirement since Module 1: the
+data was always complete (`origin`, `validation_state`, `review_status`
+on every `RequirementOut`), but no screen showed it in aggregate. An
+independent portfolio-readiness audit (the "Portfolio Visibility &
+Documentation Hygiene" milestone immediately prior to this one)
+surfaced it as the highest-value remaining gap precisely because the
+project's central narrative — AI drafts, deterministic rules validate,
+a human decides — was only ever demonstrated one card at a time.
+
+### Why requirement-level, not run-level
+
+FR10's own text ("available for every requirement") and the drill-down
+requirement (reuse the existing per-requirement card) both point at
+requirement-level rows. A run-level rollup would have fragmented one
+screen into two without answering the question this view exists for:
+"where does each requirement stand, and what's blocking a decision?"
+
+### Why a small new endpoint instead of client-side N+1 aggregation
+
+Every other per-card fetch in this application is already an accepted,
+intentional N+1 (`module2-review-handoff.md`'s own P3 list names this
+as a known, scale-appropriate limitation for a single-user local tool).
+Extending that pattern to a *summary* view was considered and rejected:
+a cross-requirement audit view is a fundamentally different kind of
+read — one row per requirement, computed from data that already lives
+behind different endpoints — not a repeated fetch of the same
+single-requirement shape. A purpose-built, read-only projection makes
+that distinction explicit in the API surface itself, rather than
+leaving it as an implicit property of how the UI happens to call
+existing endpoints. This required no schema change, no migration, and
+no change to `app/validation_engine.py`,
+`app/acceptance_criteria_validation_engine.py`, any rule module, either
+extraction client, or provider selection — every relationship the new
+query walks already existed on `Requirement`, `ExtractedRequirement`,
+`ExtractionRun`, `SourceDocument`, `ExtractedAcceptanceCriterion`, and
+`AcceptanceCriterion`.
+
+### Why the view deliberately stays narrow
+
+No per-rule PASS/WARN/FAIL breakdown, no acceptance-criteria validation
+"worst state" beyond a plain count, no quality score, no charts, no
+trends, no export, no pagination, no review-notes field (none exists in
+the schema, and adding one was out of scope for this milestone). The
+summary's job is triage — surfacing what's blocking a decision — not
+a second, competing detail view or a generic reporting dashboard. Every
+field the full per-requirement card already shows in depth (individual
+rule messages, edit history, source quote/span) stays exactly where it
+was; the summary links to it rather than repeating it.

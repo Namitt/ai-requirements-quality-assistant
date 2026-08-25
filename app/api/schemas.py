@@ -129,6 +129,20 @@ class RequirementReviewResponse(BaseModel):
     edit_history: list[RequirementEditOut]
 
 
+class RequirementSummaryOut(BaseModel):
+    id: int
+    current_text: str
+    source_document_id: int | None
+    source_document_title: str | None
+    origin: str
+    model_name: str | None
+    mode: str | None
+    validation_state: str
+    review_status: str
+    warn_acknowledged: bool
+    acceptance_criteria_count: int
+
+
 class AcceptanceCriteriaOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

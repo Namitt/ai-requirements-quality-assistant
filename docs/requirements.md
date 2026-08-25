@@ -32,10 +32,8 @@ second reviewer or approval chain in this version.
    and source text it originated from.
 8. The analyst reviews each requirement's `validation_state` and
    `review_status`, shown inline on its own card, one requirement at a
-   time. (The API exposes `origin`, `validation_state`, and
-   `review_status` for every requirement via `GET /requirements`,
-   which is enough to build a consolidated summary/audit table — see
-   FR10 — but the current Streamlit UI does not yet render one.)
+   time, or across every requirement at once in the "Audit &
+   Traceability Summary" tab — see FR10.
 
 ## Functional requirements
 
@@ -50,7 +48,7 @@ second reviewer or approval chain in this version.
 | FR7 | The system shall require and record an explicit acknowledgement (who, and when) before a WARN requirement can be approved, and shall block approval of any requirement with a FAIL result. Approval alone must never be treated as evidence that a WARN was acknowledged. |
 | FR8 | The system shall maintain traceability from every requirement to its originating AI output and to the exact span of source text it was extracted from. |
 | FR9 | The system shall support a replay mode that re-runs a previously captured AI extraction through the same validation and review pipeline without making a live API call. |
-| FR10 | The system shall make `origin` (AI-generated or manual), `validation_state` (PASS/WARN/FAIL), and `review_status` (pending/approved/rejected) available for every requirement, sufficient to build a summary/audit view. **Status: the data and API (`GET /requirements`) fully satisfy this; a consolidated cross-requirement summary/audit screen is not yet built in the Streamlit UI** — each requirement's `validation_state`/`review_status` is currently shown only inline on its own card. |
+| FR10 | The system shall make `origin` (AI-generated or manual), `validation_state` (PASS/WARN/FAIL), and `review_status` (pending/approved/rejected) available for every requirement, sufficient to build a summary/audit view. **Status: implemented.** `GET /requirements/summary` returns a purpose-built, requirement-level projection (origin, AI model/mode, validation state, review status, WARN-acknowledgement, and acceptance-criteria count) in one query; the Streamlit "Audit & Traceability Summary" tab renders it with filtering and sorting, drilling down into the existing per-requirement review card rather than duplicating it. |
 | FR11 | The system shall invalidate any existing WARN acknowledgement whenever a requirement is revalidated, requiring a fresh acknowledgement before that requirement can be approved again. |
 
 ## Non-functional requirements

@@ -15,12 +15,15 @@ from app.api.schemas import (
     RequirementOut,
     RequirementPatchRequest,
     RequirementReviewResponse,
+    RequirementSummaryOut,
     ValidationResultOut,
     ValidationRunOut,
     ValidationTriggerResponse,
 )
 from app.models import (
+    ExtractedAcceptanceCriterion,
     ExtractedRequirement,
+    ExtractionRun,
     Requirement,
     RequirementEdit,
     ValidationResult,
@@ -36,6 +39,66 @@ router = APIRouter(tags=["requirements"])
 )
 def list_requirements(session: Session = Depends(get_db_session)) -> list[Requirement]:
     return session.execute(select(Requirement).order_by(Requirement.id)).scalars().all()
+
+
+@router.get(
+    "/requirements/summary",
+    response_model=list[RequirementSummaryOut],
+    summary="Retrieve a requirement-level audit/traceability projection across all requirements",
+)
+def get_requirements_summary(
+    session: Session = Depends(get_db_session),
+) -> list[RequirementSummaryOut]:
+    # Declared before /requirements/{requirement_id}: that route's path
+    # parameter is untyped in the path template (only Python-typed), so
+    # Starlette's routing would otherwise match "summary" as a requirement_id
+    # string and fail int coercion with a 422 instead of ever reaching this
+    # route. Registration order is what avoids that, not the path text.
+    stmt = (
+        select(Requirement)
+        .options(
+            selectinload(Requirement.source_extraction)
+            .selectinload(ExtractedRequirement.extraction_run)
+            .selectinload(ExtractionRun.source_document),
+            selectinload(Requirement.extracted_acceptance_criteria).selectinload(
+                ExtractedAcceptanceCriterion.acceptance_criteria
+            ),
+        )
+        .order_by(Requirement.id)
+    )
+    requirements = session.execute(stmt).scalars().all()
+
+    rows: list[RequirementSummaryOut] = []
+    for requirement in requirements:
+        extracted = requirement.source_extraction
+        extraction_run = extracted.extraction_run if extracted is not None else None
+        source_document = (
+            extraction_run.source_document if extraction_run is not None else None
+        )
+        acceptance_criteria_count = sum(
+            len(extracted_ac.acceptance_criteria)
+            for extracted_ac in requirement.extracted_acceptance_criteria
+        )
+
+        rows.append(
+            RequirementSummaryOut(
+                id=requirement.id,
+                current_text=requirement.current_text,
+                source_document_id=source_document.id if source_document else None,
+                source_document_title=(
+                    source_document.title if source_document else None
+                ),
+                origin=requirement.origin,
+                model_name=extraction_run.model_name if extraction_run else None,
+                mode=extraction_run.mode if extraction_run else None,
+                validation_state=requirement.validation_state,
+                review_status=requirement.review_status,
+                warn_acknowledged=requirement.warn_acknowledged_at is not None,
+                acceptance_criteria_count=acceptance_criteria_count,
+            )
+        )
+
+    return rows
 
 
 @router.get(

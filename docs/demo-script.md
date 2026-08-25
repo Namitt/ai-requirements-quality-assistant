@@ -69,11 +69,9 @@ re-validation → human approval → traceability/audit.
 8. **(3:40) Scroll back through the set.** Point out each card's own
    `validation_state`/`review_status` badges as you scroll — how many
    were approved directly, how many needed acknowledgement, and the
-   one still blocked on FAIL. (Note if asked: `GET /requirements`
-   already returns `origin`, `validation_state`, and `review_status`
-   for every requirement at once — enough to build a single
-   consolidated summary table — but that specific screen isn't built
-   in the UI yet, only per-card display.)
+   one still blocked on FAIL. (Note if asked: the same information is
+   also available in one place, across every requirement, in the
+   "Audit & Traceability Summary" tab.)
 9. **(4:20) One-line limitations note.** Name the weakest rule
    (possible contradiction) as a caveat, to show the limitations are
    known, not hidden.

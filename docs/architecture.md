@@ -8,7 +8,7 @@
 | Database | SQLite | Single-file, relational, sufficient for single-user local scope |
 | Data access | SQLAlchemy | Explicit models, explicit foreign keys |
 | AI provider | Anthropic API (default) or Google Gemini Developer API, selected via `AI_PROVIDER` | Used only for extraction, never for validation |
-| Frontend | React + Vite | Deliberately small — this is a BA/DA project, not a frontend showcase |
+| Frontend | Streamlit (`app/ui/streamlit_app.py`) | A thin HTTP client of the FastAPI backend, deliberately small — this is a BA/DA project, not a frontend showcase. React + Vite was the original plan (see `decisions-log.md`) but was replaced before implementation. |
 | Testing | pytest | Validator tested against a fixed reference fixture |
 
 See `decisions-log.md` for the reasoning behind each of these choices
@@ -276,10 +276,8 @@ AI is used for exactly one function: extracting candidate requirements
 from source text. It never validates, never approves, and the system
 never presents AI output as though it has already been judged correct.
 `origin` (`ai_generated` vs. `manual`) is recorded on every requirement
-and exposed via the API on every read; the current Streamlit UI does
-not yet render a distinct visual treatment for it (see
-`requirements.md`'s FR10 for the same gap regarding a consolidated
-summary/audit view).
+and exposed via the API on every read, including as its own column in
+the "Audit & Traceability Summary" tab (see `requirements.md`'s FR10).
 
 This boundary is enforced by where the AI provider sits in the
 pipeline, not by convention:
