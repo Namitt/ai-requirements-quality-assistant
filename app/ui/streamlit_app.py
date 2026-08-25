@@ -1,5 +1,21 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Streamlit's CLI only ever adds this script's own directory (app/ui) to
+# sys.path, never the repository root - the `from app...` imports below
+# would raise ModuleNotFoundError: No module named 'app' under a real
+# `streamlit run` invocation (confirmed locally with the bare CLI entry
+# point, the same one Streamlit Community Cloud uses). `python -m
+# streamlit run` masks this because `-m` separately adds the current
+# working directory - this is why it was never caught before. Resolved
+# from __file__, not the working directory, so it is correct regardless
+# of where the process is launched from.
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 import streamlit as st
 
 from app.ui import api_client

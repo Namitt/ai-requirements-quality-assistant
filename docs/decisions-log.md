@@ -1190,3 +1190,68 @@ refresh or session expiry — correct for a stateless public demo, but not
 a pattern that would extend to a real multi-tenant deployment, which
 would need real persistence, real authentication, and real rate limiting
 on anything AI-calling, none of which this milestone adds or claims to.
+
+---
+
+## 2026-08-25 — Both Streamlit entrypoints bootstrap the repository root onto sys.path themselves, because Streamlit's CLI never does
+
+### The decision
+
+`app/ui/streamlit_app.py` and `app/ui/streamlit_public_demo.py` each open
+with a small block, immediately after `from __future__ import
+annotations` and before any `app.*` import:
+
+```python
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+```
+
+### Why
+
+The first real Streamlit Community Cloud deployment attempt failed at
+startup with `ModuleNotFoundError: No module named 'app'` on
+`streamlit_public_demo.py`'s `from app.api.deps import get_db_session`.
+Reproduced locally, exactly: Streamlit's own CLI
+(`streamlit.web.bootstrap._fix_sys_path`,
+`streamlit.runtime.scriptrunner.exec_code.modified_sys_path`) only ever
+adds the target script's **own** directory (`app/ui`) to `sys.path` —
+never the repository root, never the current working directory. Nothing
+else in this project's configuration adds it either (`pyproject.toml`'s
+`pythonpath = ["."]` is pytest-only). Every previous local verification
+in this project's history used `python -m streamlit run ...`, and
+Python's `-m` flag independently inserts the current working directory
+onto `sys.path` — which is what silently masked this for as long as it
+did. The bare `streamlit run app/ui/streamlit_app.py` command README has
+always documented turns out to share the identical defect; it was never
+actually exercised in its documented form until this Cloud deployment did
+the equivalent on Linux. Resolving the repository root from `__file__`
+(not the working directory) keeps the fix correct no matter where the
+process is launched from — a requirement Cloud's own execution context
+makes non-negotiable, since its working directory conventions aren't
+something this project controls.
+
+### What I rejected, and why it lost
+
+Relocating the entrypoints to the repository root (so Streamlit's own
+directory-insertion would incidentally include `app/`) was considered and
+rejected: it would move files referenced throughout this project's docs,
+the Cloud deployment's own "main file path" setting, and the
+`decisions-log.md` history for no benefit beyond avoiding four lines of
+code, while adding real churn.
+
+Making `app` a real installed package (`pyproject.toml`'s `[build-system]`
++ `pip install -e .`) was also considered, since that would fix this more
+"properly." It lost because README already documents, as a known,
+deliberate limitation, that `pip install -e .` does not currently work
+for this project (ambiguous top-level package discovery) — fixing that
+is a separate, larger change than this defect warrants, and was
+explicitly out of scope for this fix.
+
+### What I'd do differently at production scale
+
+A project with a real packaging/build story (a proper `[build-system]`
+and an installable `app` package) wouldn't need this bootstrap at all —
+the interpreter would already know where `app` lives. This bootstrap is
+the correct minimal fix for this project's current, deliberately
+unpackaged layout, not a long-term substitute for one.
