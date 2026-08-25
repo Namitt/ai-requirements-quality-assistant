@@ -1,0 +1,39 @@
+# Minimal dependency set for the PUBLIC DEMO deployment
+# (app/ui/streamlit_public_demo.py) on Streamlit Community Cloud, not a
+# copy of requirements-lock.txt (that file is the full pip-freeze snapshot
+# for the canonical two-process local app, including packages the public
+# demo never imports).
+#
+# This is deliberately narrower than pyproject.toml's dependency list.
+# Determined empirically, not by inspection alone: importing
+# app.ui.streamlit_public_demo and diffing sys.modules before/after shows
+# exactly these 4 packages' top-level modules are pulled in - anthropic,
+# google-genai, alembic, uvicorn, and pytest are all confirmed ABSENT, and
+# stay absent for the demo's full runtime lifecycle now that the "Draft
+# Acceptance Criteria" control is disabled in this entrypoint via
+# api_client.disable_ai_drafting() (see docs/decisions-log.md), which makes
+# the only two routes that would ever construct an AI provider client
+# (POST /extractions, POST /requirements/{id}/acceptance-criteria)
+# structurally unreachable from this page - not just unreached in testing:
+#   - alembic: only used for the local app's on-disk schema migrations;
+#     the public demo builds its schema with Base.metadata.create_all()
+#     against a fresh in-memory database every session.
+#   - uvicorn: only used to serve app.main:app as a real, externally
+#     reachable ASGI server for the local two-process deployment; the
+#     public demo never does this - FastAPI is used strictly in-process
+#     via fastapi.testclient.TestClient.
+#   - pytest: dev-only.
+#   - anthropic / google-genai: both AI provider SDKs are imported lazily,
+#     deep inside their respective ExtractionClient classes, and are only
+#     ever reached through the two routes named above.
+#
+# Versions are exact pins, matching requirements-lock.txt (the currently
+# verified environment) rather than pyproject.toml's open ranges, so a
+# Streamlit Cloud build resolves to the exact versions this was tested
+# against instead of whatever newer release satisfies the range on the day
+# of the build. Do not upgrade these without re-running the full local test
+# suite and updating requirements-lock.txt to match.
+fastapi==0.141.1
+httpx==0.28.1
+sqlalchemy==2.0.52
+streamlit==1.62.0

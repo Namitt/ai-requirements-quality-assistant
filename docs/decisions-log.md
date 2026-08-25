@@ -1095,3 +1095,98 @@ a second, competing detail view or a generic reporting dashboard. Every
 field the full per-requirement card already shows in depth (individual
 rule messages, edit history, source quote/span) stays exactly where it
 was; the summary links to it rather than repeating it.
+
+---
+
+## 2026-08-25 — Public demo packaging: one Streamlit Cloud process hosts a fresh in-process FastAPI + in-memory SQLite bundle per session, from a frozen fixture
+
+### The decision
+
+`app/ui/streamlit_public_demo.py` is a second, deployment-specific
+Streamlit entrypoint, additive to `app/ui/streamlit_app.py` rather than a
+replacement for it. The canonical, designed, and tested architecture
+remains two separate processes — a FastAPI backend and a Streamlit UI
+talking to it over HTTP — exactly as documented elsewhere in this file and
+runnable locally exactly as before. Streamlit Community Cloud can only
+host a single process, so this entrypoint packages the same real
+application to fit that constraint: on first load, each Streamlit session
+builds its own fresh `FastAPI()` instance (the same real routers and
+exception handlers `app.main.app` uses) wired to its own fresh
+`sqlite:///:memory:` database, connected via
+`fastapi.testclient.TestClient` as an in-process transport instead of real
+HTTP (`app/ui/api_client.py::use_test_client`, a `ContextVar`-scoped
+seam). The database is seeded once per session from
+`app/ui/public_demo_fixture.py` — a genuine, captured snapshot of real AI
+provider output, replayed rather than called live — so a recruiter can
+explore the full workflow with no API key at all. The bundle is stored in
+`st.session_state`, never `st.cache_resource`, which is process-wide
+across every concurrent visitor and would otherwise leak one visitor's
+data into another's session.
+
+A second, narrower toggle from the same milestone:
+`api_client.disable_ai_drafting()` (the same `ContextVar` pattern as
+`use_test_client()`) is active for the whole public-demo render pass,
+which disables (visibly, with an explanation) the pre-existing "Draft
+Acceptance Criteria" control in `render_acceptance_criteria_section` —
+the only UI control anywhere in the public demo that could otherwise
+reach `get_extraction_client()` and attempt a real provider call. This
+closes that path structurally, not just by relying on no key being
+configured: it stays closed even if a deployment administrator later adds
+a provider key to this app's Streamlit Cloud secrets for an unrelated
+reason.
+
+A related, independently discovered defect fixed in the same milestone:
+`st.tabs()` executes **both** tab bodies on every script run, whether or
+not the user is looking at that tab. Since the same requirement can be
+rendered once from the Workflow tab and once from the Audit tab's
+drill-down in one run, `render_requirement_card` and everything it calls
+gained a `scope: str = "workflow"` parameter, and every widget/
+session-state key that could collide (17 in total) is now prefixed by it;
+the Audit call site passes `scope="audit"`. This was a **pre-existing**
+latent bug in `app/ui/streamlit_app.py`, only ever exposed by a caller
+that renders the same requirement through two contexts in one run — which
+nothing did before this milestone.
+
+### Why
+
+Recruiters and interviewers need to explore this project without an
+Anthropic or Gemini API key, and without the ability to trigger a
+real, potentially billable, provider call from a public page. Building a
+third, parallel rendering codebase for a public-facing view was rejected
+before it started — `streamlit_public_demo.py` composes the same
+`render_header`, `render_replay_section`, `render_results_section`, and
+`render_audit_summary_section` functions `streamlit_app.py` already has
+and already tests exercise, so the public demo can never drift from what
+the canonical app actually does. `fastapi.testclient.TestClient` was
+chosen over a real, second uvicorn process because Streamlit Community
+Cloud only exposes one process and one port; a `TestClient` gives
+`api_client.py` a real ASGI request/response cycle — the actual routers,
+the actual exception handlers, the actual SQLAlchemy session — with no
+externally reachable backend at all, which is a stronger isolation
+guarantee than a second internal port would be, not a weaker one.
+
+### What I rejected, and why it lost
+
+Leaving the "Draft Acceptance Criteria" control active (relying only on
+the missing-API-key `502` every route already returns) was considered and
+rejected: it protects against the default no-key deployment, but not
+against a future deployment administrator setting a real key in this
+app's secrets, which a recruiter clicking a live-looking button has no
+way to know about. A public-demo-specific toggle closes that gap without
+touching the canonical app's own behaviour (the control remains fully
+active there, unconditionally, by default).
+
+Hiding the widget-key collision by writing public-demo-only rendering
+functions, instead of fixing the shared ones, was also rejected — it
+would have hidden a real, pre-existing defect in the already-shipped
+`streamlit_app.py` behind the new entrypoint rather than fixing it, and
+duplicated rendering logic the project has otherwise kept single-sourced
+throughout.
+
+### What I'd do differently at production scale
+
+The per-session in-memory database means every visitor's data vanishes on
+refresh or session expiry — correct for a stateless public demo, but not
+a pattern that would extend to a real multi-tenant deployment, which
+would need real persistence, real authentication, and real rate limiting
+on anything AI-calling, none of which this milestone adds or claims to.

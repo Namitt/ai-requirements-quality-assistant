@@ -1,11 +1,67 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Iterator
 
 import httpx
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
+
+# Unset (None) by default, which preserves the exact real-HTTP behaviour this
+# module has always had. The public demo deployment is the only caller that
+# ever sets this - to a per-session fastapi.testclient.TestClient bound to
+# that session's own in-process FastAPI app - via use_test_client() below.
+# A ContextVar (not a plain module-level variable) is used deliberately: it
+# is scoped to the current context rather than being shared global mutable
+# state, so it cannot leak between independent overrides.
+_test_client_override: ContextVar[httpx.Client | None] = ContextVar(
+    "_test_client_override", default=None
+)
+
+
+@contextmanager
+def use_test_client(client: httpx.Client) -> Iterator[None]:
+    """Route every api_client call made inside this block through `client`
+    (a fastapi.testclient.TestClient, or any httpx.Client-compatible object)
+    instead of a real HTTP request. Restores the previous behaviour - real
+    HTTP, or whatever override was active before - on exit, even if the
+    block raises.
+    """
+    token = _test_client_override.set(client)
+    try:
+        yield
+    finally:
+        _test_client_override.reset(token)
+
+
+# Same ContextVar-scoped pattern as _test_client_override above, for the
+# same reason: the public demo is the only caller that ever sets this, and a
+# ContextVar keeps it from leaking into anything else running in the same
+# process. This does not call or block any API route itself - it only lets
+# a rendering layer (app/ui/streamlit_app.py) decide whether to offer a
+# control that would trigger one, so the canonical two-process app's own
+# behaviour is completely unaffected (the default is "not disabled").
+_ai_drafting_disabled: ContextVar[bool] = ContextVar("_ai_drafting_disabled", default=False)
+
+
+@contextmanager
+def disable_ai_drafting() -> Iterator[None]:
+    """Inside this block, ai_drafting_disabled() reports True. Intended for
+    a UI layer to hide/disable AI-drafting controls (never for api_client
+    itself to block a call) - see render_acceptance_criteria_section's use
+    of ai_drafting_disabled() in app/ui/streamlit_app.py.
+    """
+    token = _ai_drafting_disabled.set(True)
+    try:
+        yield
+    finally:
+        _ai_drafting_disabled.reset(token)
+
+
+def ai_drafting_disabled() -> bool:
+    return _ai_drafting_disabled.get()
 
 
 class APIClientError(RuntimeError):
@@ -21,9 +77,17 @@ def _base_url() -> str:
 
 
 def _request(method: str, path: str, **kwargs: Any) -> Any:
-    url = f"{_base_url()}{path}"
+    override = _test_client_override.get()
     try:
-        response = httpx.request(method, url, timeout=60.0, **kwargs)
+        if override is not None:
+            # No timeout kwarg here: this is an in-process call (e.g. a
+            # fastapi.testclient.TestClient), not a real network request,
+            # and Starlette's TestClient deprecates/rejects the argument -
+            # network timeouts have no meaning for an in-process ASGI call.
+            response = override.request(method, path, **kwargs)
+        else:
+            url = f"{_base_url()}{path}"
+            response = httpx.request(method, url, timeout=60.0, **kwargs)
     except httpx.RequestError as exc:
         raise APIClientError(
             "Could not reach the requirements API. Check that the backend "

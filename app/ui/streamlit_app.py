@@ -166,7 +166,9 @@ def render_results_section() -> None:
         render_requirement_card(requirement_id, run["model_name"], run["mode"])
 
 
-def render_requirement_card(requirement_id: int, model_name: str, mode: str) -> None:
+def render_requirement_card(
+    requirement_id: int, model_name: str, mode: str, scope: str = "workflow"
+) -> None:
     try:
         review = api_client.get_requirement_review(requirement_id)
     except APIClientError as exc:
@@ -212,12 +214,19 @@ def render_requirement_card(requirement_id: int, model_name: str, mode: str) -> 
                     if result["recommended_action"]:
                         st.caption(f"Recommended action: {result['recommended_action']}")
 
-        render_review_controls(requirement, review["edit_history"])
+        render_review_controls(requirement, review["edit_history"], scope)
 
-        render_acceptance_criteria_section(requirement_id)
+        render_acceptance_criteria_section(requirement_id, scope)
 
 
-def render_review_controls(requirement: dict, edit_history: list[dict]) -> None:
+def render_review_controls(
+    requirement: dict, edit_history: list[dict], scope: str = "workflow"
+) -> None:
+    # scope disambiguates widget/session-state keys when the same requirement
+    # is rendered from more than one place in one script run (e.g. the
+    # Workflow tab and the Audit tab's drill-down both call this) - without
+    # it, Streamlit raises StreamlitDuplicateElementKey, and the two contexts
+    # would also silently share edit-mode state via st.session_state.
     requirement_id = requirement["id"]
     st.markdown("**🧑 Human review**")
 
@@ -236,19 +245,19 @@ def render_review_controls(requirement: dict, edit_history: list[dict]) -> None:
         )
         return
 
-    edit_key = f"editing_{requirement_id}"
+    edit_key = f"{scope}_editing_{requirement_id}"
     edit_col, approve_col, reject_col = st.columns(3)
 
-    if edit_col.button("Edit", key=f"edit_btn_{requirement_id}"):
+    if edit_col.button("Edit", key=f"{scope}_edit_btn_{requirement_id}"):
         st.session_state[edit_key] = not st.session_state.get(edit_key, False)
 
     if st.session_state.get(edit_key):
         new_text = st.text_area(
             "Edit requirement text",
             value=requirement["current_text"],
-            key=f"edit_text_{requirement_id}",
+            key=f"{scope}_edit_text_{requirement_id}",
         )
-        if st.button("Save edit", key=f"save_edit_{requirement_id}"):
+        if st.button("Save edit", key=f"{scope}_save_edit_{requirement_id}"):
             try:
                 api_client.patch_requirement(requirement_id, new_text)
                 st.session_state[edit_key] = False
@@ -260,22 +269,24 @@ def render_review_controls(requirement: dict, edit_history: list[dict]) -> None:
     validation_state = requirement["validation_state"]
 
     if validation_state == "fail":
-        approve_col.button("Approve", key=f"approve_btn_{requirement_id}", disabled=True)
+        approve_col.button(
+            "Approve", key=f"{scope}_approve_btn_{requirement_id}", disabled=True
+        )
         approve_col.caption("Blocked: FAIL result cannot be approved.")
     elif validation_state == "warn":
         acknowledge = approve_col.checkbox(
             "I have reviewed the warning; it does not block approval",
-            key=f"ack_{requirement_id}",
+            key=f"{scope}_ack_{requirement_id}",
         )
         if approve_col.button(
-            "Approve", key=f"approve_btn_{requirement_id}", disabled=not acknowledge
+            "Approve", key=f"{scope}_approve_btn_{requirement_id}", disabled=not acknowledge
         ):
             _approve(requirement_id, acknowledge_warning=True)
     else:
-        if approve_col.button("Approve", key=f"approve_btn_{requirement_id}"):
+        if approve_col.button("Approve", key=f"{scope}_approve_btn_{requirement_id}"):
             _approve(requirement_id, acknowledge_warning=False)
 
-    if reject_col.button("Reject", key=f"reject_btn_{requirement_id}"):
+    if reject_col.button("Reject", key=f"{scope}_reject_btn_{requirement_id}"):
         try:
             api_client.reject_requirement(requirement_id)
             st.success("Requirement rejected.")
@@ -293,7 +304,7 @@ def _approve(requirement_id: int, acknowledge_warning: bool) -> None:
         st.error(f"Could not approve the requirement. {exc}")
 
 
-def render_acceptance_criteria_section(requirement_id: int) -> None:
+def render_acceptance_criteria_section(requirement_id: int, scope: str = "workflow") -> None:
     st.markdown("**📋 Acceptance criteria**")
     st.caption(
         "AI-drafted Given/When/Then criteria for this requirement, checked "
@@ -302,7 +313,19 @@ def render_acceptance_criteria_section(requirement_id: int) -> None:
         "the requirement's own review status."
     )
 
-    if st.button("Draft Acceptance Criteria", key=f"draft_ac_btn_{requirement_id}"):
+    if api_client.ai_drafting_disabled():
+        st.button(
+            "Draft Acceptance Criteria",
+            key=f"{scope}_draft_ac_btn_{requirement_id}",
+            disabled=True,
+        )
+        st.caption(
+            "Live AI drafting is disabled in this public demo to avoid "
+            "triggering a real provider call from a public page. Any "
+            "acceptance criteria shown below were captured earlier from a "
+            "genuine AI drafting call."
+        )
+    elif st.button("Draft Acceptance Criteria", key=f"{scope}_draft_ac_btn_{requirement_id}"):
         try:
             with st.spinner("Drafting acceptance criterion..."):
                 api_client.draft_acceptance_criteria(requirement_id)
@@ -327,16 +350,16 @@ def render_acceptance_criteria_section(requirement_id: int) -> None:
     live_extracted_options: dict[str, int] = {}
 
     for criterion in criteria:
-        render_acceptance_criterion_card(criterion["id"], live_extracted_options)
+        render_acceptance_criterion_card(criterion["id"], live_extracted_options, scope)
 
     if live_extracted_options:
         with st.expander("Replay a previous live draft"):
             selected_label = st.selectbox(
                 "Choose a previous live draft to replay",
                 live_extracted_options.keys(),
-                key=f"ac_replay_select_{requirement_id}",
+                key=f"{scope}_ac_replay_select_{requirement_id}",
             )
-            if st.button("Replay Selected Draft", key=f"ac_replay_btn_{requirement_id}"):
+            if st.button("Replay Selected Draft", key=f"{scope}_ac_replay_btn_{requirement_id}"):
                 extracted_id = live_extracted_options[selected_label]
                 try:
                     with st.spinner(
@@ -349,7 +372,9 @@ def render_acceptance_criteria_section(requirement_id: int) -> None:
 
 
 def render_acceptance_criterion_card(
-    acceptance_criterion_id: int, live_extracted_options: dict[str, int]
+    acceptance_criterion_id: int,
+    live_extracted_options: dict[str, int],
+    scope: str = "workflow",
 ) -> None:
     try:
         review = api_client.get_acceptance_criteria_review(acceptance_criterion_id)
@@ -397,11 +422,11 @@ def render_acceptance_criterion_card(
                     if result["recommended_action"]:
                         st.caption(f"Recommended action: {result['recommended_action']}")
 
-        render_acceptance_criteria_review_controls(criterion, review["edit_history"])
+        render_acceptance_criteria_review_controls(criterion, review["edit_history"], scope)
 
 
 def render_acceptance_criteria_review_controls(
-    criterion: dict, edit_history: list[dict]
+    criterion: dict, edit_history: list[dict], scope: str = "workflow"
 ) -> None:
     acceptance_criterion_id = criterion["id"]
     st.markdown("**🧑 Human review (acceptance criterion)**")
@@ -423,19 +448,19 @@ def render_acceptance_criteria_review_controls(
         )
         return
 
-    edit_key = f"editing_ac_{acceptance_criterion_id}"
+    edit_key = f"{scope}_editing_ac_{acceptance_criterion_id}"
     edit_col, approve_col, reject_col = st.columns(3)
 
-    if edit_col.button("Edit", key=f"edit_ac_btn_{acceptance_criterion_id}"):
+    if edit_col.button("Edit", key=f"{scope}_edit_ac_btn_{acceptance_criterion_id}"):
         st.session_state[edit_key] = not st.session_state.get(edit_key, False)
 
     if st.session_state.get(edit_key):
         new_text = st.text_area(
             "Edit acceptance criterion text",
             value=criterion["current_text"],
-            key=f"edit_ac_text_{acceptance_criterion_id}",
+            key=f"{scope}_edit_ac_text_{acceptance_criterion_id}",
         )
-        if st.button("Save edit", key=f"save_ac_edit_{acceptance_criterion_id}"):
+        if st.button("Save edit", key=f"{scope}_save_ac_edit_{acceptance_criterion_id}"):
             try:
                 api_client.patch_acceptance_criteria(acceptance_criterion_id, new_text)
                 st.session_state[edit_key] = False
@@ -448,25 +473,29 @@ def render_acceptance_criteria_review_controls(
 
     if validation_state == "fail":
         approve_col.button(
-            "Approve", key=f"approve_ac_btn_{acceptance_criterion_id}", disabled=True
+            "Approve",
+            key=f"{scope}_approve_ac_btn_{acceptance_criterion_id}",
+            disabled=True,
         )
         approve_col.caption("Blocked: FAIL result cannot be approved.")
     elif validation_state == "warn":
         acknowledge = approve_col.checkbox(
             "I have reviewed the warning; it does not block approval",
-            key=f"ack_ac_{acceptance_criterion_id}",
+            key=f"{scope}_ack_ac_{acceptance_criterion_id}",
         )
         if approve_col.button(
             "Approve",
-            key=f"approve_ac_btn_{acceptance_criterion_id}",
+            key=f"{scope}_approve_ac_btn_{acceptance_criterion_id}",
             disabled=not acknowledge,
         ):
             _approve_acceptance_criterion(acceptance_criterion_id, acknowledge_warning=True)
     else:
-        if approve_col.button("Approve", key=f"approve_ac_btn_{acceptance_criterion_id}"):
+        if approve_col.button(
+            "Approve", key=f"{scope}_approve_ac_btn_{acceptance_criterion_id}"
+        ):
             _approve_acceptance_criterion(acceptance_criterion_id, acknowledge_warning=False)
 
-    if reject_col.button("Reject", key=f"reject_ac_btn_{acceptance_criterion_id}"):
+    if reject_col.button("Reject", key=f"{scope}_reject_ac_btn_{acceptance_criterion_id}"):
         try:
             api_client.reject_acceptance_criteria(acceptance_criterion_id)
             st.success("Acceptance criterion rejected.")
@@ -597,6 +626,7 @@ def render_audit_summary_section() -> None:
             selected_id,
             selected_row["model_name"] or "—",
             selected_row["mode"] or "live",
+            scope="audit",
         )
 
 
@@ -613,4 +643,5 @@ def main() -> None:
         render_audit_summary_section()
 
 
-main()
+if __name__ == "__main__":
+    main()
